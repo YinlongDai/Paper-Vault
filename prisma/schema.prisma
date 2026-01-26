@@ -1,0 +1,38 @@
+datasource db {
+  provider = "sqlite"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model SavedPaper {
+  id        Int      @id @default(autoincrement())
+  arxivId   String   @unique
+  title     String
+  authors   String
+  summary   String
+  pdfUrl    String
+  absUrl    String
+  published String
+  createdAt DateTime @default(now())
+  labels    SavedPaperLabel[]
+}
+
+model Label {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  createdAt DateTime @default(now())
+
+  papers    SavedPaperLabel[]
+}
+
+model SavedPaperLabel {
+  paperId Int
+  labelId Int
+
+  paper   SavedPaper @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  label   Label      @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([paperId, labelId])
+}

@@ -21,7 +21,7 @@ It allows you to search papers (arXiv + OpenAlex), save them locally, organize w
 
   🤖 Optional AI-generated paper summaries
 
-  🗄️ Local SQLite database (zero **setup**)
+  🗄️ Local SQLite database (zero setup)
 
 ---
 
@@ -99,15 +99,14 @@ Open the app at:
 ## 🤖 AI Summary Workflow (Optional)
 
 1. Save a **paper**
-2. Backend downloads the PDF
-3. PDF + prompt are sent to Gemini
-4. Summary is stored in the database
-5. Summary appears on the paper detail page
+2. PDF + prompt are sent to LM
+3. Summary is stored in the database
+4. Summary appears on the paper detail page
 
 Notes:
 - Summaries are generated once per paper
 - Stored permanently
-- Separate from user notes
+- Can be regenerated 
 
 ---
 

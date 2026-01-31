@@ -1,5 +1,6 @@
 # 📚 Paper Vault
 **This project is 100% vibe coded.**
+
 Paper Vault is a lightweight research paper manager built with **Next.js (App Router)**, **Prisma**, and **SQLite**.
 
 It allows you to search papers (arXiv + OpenAlex), save them locally, organize with labels, take Markdown notes, view PDFs inline, and optionally generate AI summaries.
@@ -14,7 +15,7 @@ It allows you to search papers (arXiv + OpenAlex), save them locally, organize w
 - 📝 Markdown notes per paper
 - 📄 Inline PDF viewer
 - 🤖 Optional AI-generated paper summaries
-- 🗄️ Local SQLite database (zero setup)
+- 🗄️ Local SQLite database (zero **setup**)
 
 ---
 
@@ -30,8 +31,6 @@ It allows you to search papers (arXiv + OpenAlex), save them locally, organize w
 ### 2️⃣ Install dependencies
 
     npm install
-
-(Or `pnpm install` / `yarn`)
 
 ---
 
@@ -98,34 +97,6 @@ This will:
 Open the app at:
 
     http://localhost:3000
-
----
-
-## 🧪 Optional: Inspect the Database
-
-    npx prisma studio
-
-This opens a GUI to inspect:
-- saved papers
-- labels
-- notes
-- AI summaries
-
----
-
-## 📁 Git & File Policy
-
-### ✅ Commit these files
-- `prisma/schema.prisma`
-- `prisma/migrations/**`
-- `.env.example`
-
-### ❌ Do NOT commit these files
-- `.env`
-- `.env.local`
-- `dev.db`
-
-These should be ignored via `.gitignore`.
 
 ---
 

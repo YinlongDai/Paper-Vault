@@ -9,13 +9,13 @@ It allows you to search papers (arXiv + OpenAlex), save them locally, organize w
 
 ## ✨ Features
 
-- 🔍 Search papers from arXiv and OpenAlex
-- 💾 Save papers locally
-- 🏷️ Add / remove labels
-- 📝 Markdown notes per paper
-- 📄 Inline PDF viewer
-- 🤖 Optional AI-generated paper summaries
-- 🗄️ Local SQLite database (zero **setup**)
+  🔍 Search papers from arXiv and OpenAlex
+  💾 Save papers locally
+  🏷️ Add / remove labels
+  📝 Markdown notes per paper
+  📄 Inline PDF viewer
+  🤖 Optional AI-generated paper summaries
+  🗄️ Local SQLite database (zero **setup**)
 
 ---
 
@@ -36,8 +36,8 @@ It allows you to search papers (arXiv + OpenAlex), save them locally, organize w
 
 This project uses two environment files:
 
-- `.env` → used by Prisma
-- `.env.local` → used by Next.js and API routes
+  `.env` → used by Prisma
+  `.env.local` → used by Next.js and API routes
 
 ### 3️⃣ Create env files from template
 
@@ -53,7 +53,6 @@ This configures Prisma to use a local SQLite database.
 ### 5️⃣ Edit `.env.local` (optional, for AI summaries)
 
     GEMINI_API_KEY=your_api_key_here
-    GEMINI_MODEL=models/gemini-2.5-flash
 
 If this is not set, the app will still work but AI summaries will be disabled.
 

@@ -11,6 +11,10 @@ type Paper = {
   absUrl: string;
   pdfUrl: string;
   labelNames?: string[];
+  source?: "arxiv" | "openalex";
+  citationCount?: number;
+  influentialCitationCount?: number;
+  doi?: string;
 };
 
 const LABEL_PALETTE = [
@@ -43,7 +47,7 @@ function colorForLabel(name: string) {
 export default function Home() {
   const [q, setQ] = useState("");
   const [field, setField] = useState<"smart" | "title" | "author" | "abstract" | "all">("title");
-  const [sort, setSort] = useState<"relevance" | "submittedDate" | "lastUpdatedDate">("relevance");
+  const [sort, setSort] = useState<"relevance" | "submittedDate" | "lastUpdatedDate" | "citations">("relevance");
   const [order, setOrder] = useState<"descending" | "ascending">("descending");
   const [papers, setPapers] = useState<Paper[]>([]);
   const [loading, setLoading] = useState(false);
@@ -96,16 +100,28 @@ export default function Home() {
       .filter(([, v]) => v)
       .map(([k]) => k);
 
-    await fetch("/api/saved", {
+    const saveRes = await fetch("/api/saved", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...pendingPaper, labelNames: chosen }),
     });
 
+    const saveJson: any = await saveRes.json().catch(() => ({}));
     setShowLabelPrompt(false);
     setPendingPaper(null);
     setPendingSelected({});
     await loadSaved();
+
+    if (saveJson?.shouldSummarize) {
+      // Fire-and-forget; summary is cached in DB
+      void fetch("/api/summarize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ arxivId: pendingPaper.arxivId }),
+      }).catch((e) => {
+        console.error("Auto summarize failed", e);
+      });
+    }
   }
 
   function cancelSaveWithLabels() {
@@ -203,6 +219,7 @@ export default function Home() {
           style={{ padding: 10, border: "1px solid #ddd", borderRadius: 8 }}
         >
           <option value="relevance">Relevance</option>
+          <option value="citations">Citations</option>
           <option value="submittedDate">Date (submitted)</option>
           <option value="lastUpdatedDate">Date (updated)</option>
         </select>
@@ -350,9 +367,27 @@ export default function Home() {
             <div key={p.arxivId} style={{ border: "1px solid #eee", borderRadius: 10, padding: 14 }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
                 <div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
                   <div style={{ fontWeight: 700 }}>{p.title}</div>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      padding: "2px 8px",
+                      borderRadius: 999,
+                      border: "1px solid #ddd",
+                      opacity: 0.85,
+                    }}
+                    title={p.source === "openalex" ? "OpenAlex" : "arXiv"}
+                  >
+                    {p.source === "openalex" ? "OpenAlex" : "arXiv"}
+                  </span>
+                </div>
                   <div style={{ fontSize: 13, opacity: 0.8 }}>{p.authors}</div>
-                  <div style={{ fontSize: 12, opacity: 0.7 }}>Published: {p.published}</div>
+                  <div style={{ fontSize: 12, opacity: 0.7 }}>
+                    Published: {p.published}
+                    {typeof p.citationCount === "number" ? ` · Citations: ${p.citationCount}` : ""}
+                    {typeof p.influentialCitationCount === "number" ? ` · Influential: ${p.influentialCitationCount}` : ""}
+                  </div>
                 </div>
                 <div style={{ display: "flex", gap: 10, alignItems: "start" }}>
                   <a href={p.absUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>

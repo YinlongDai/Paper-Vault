@@ -17,6 +17,8 @@ model SavedPaper {
   published String
   createdAt DateTime @default(now())
   labels    SavedPaperLabel[]
+  note      String?
+  aiSummary String?
 }
 
 model Label {

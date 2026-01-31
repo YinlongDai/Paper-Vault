@@ -59,6 +59,14 @@ export async function POST(req: Request) {
   const p = body;
   const labelNames: string[] = Array.isArray(p?.labelNames) ? p.labelNames : [];
 
+  // Summarize only if we don't already have a cached AI summary.
+  // (This covers first-save and also retries when a previous summarize failed.)
+  const existing = await prisma.savedPaper.findUnique({
+    where: { arxivId: p.arxivId },
+    select: { aiSummary: true },
+  });
+  const shouldSummarize = !String(existing?.aiSummary ?? "").trim();
+
   const paper = await prisma.savedPaper.upsert({
     where: { arxivId: p.arxivId },
     update: {
@@ -68,6 +76,8 @@ export async function POST(req: Request) {
       pdfUrl: p.pdfUrl,
       absUrl: p.absUrl,
       published: p.published,
+      // Do NOT update note here
+      // Do NOT update aiSummary here
     },
     create: {
       arxivId: p.arxivId,
@@ -77,6 +87,8 @@ export async function POST(req: Request) {
       pdfUrl: p.pdfUrl,
       absUrl: p.absUrl,
       published: p.published,
+      note: "",
+      aiSummary: "",
     },
   });
 
@@ -101,7 +113,8 @@ export async function POST(req: Request) {
     });
   }
 
-  return NextResponse.json({ ok: true });
+  // Return shouldSummarize so the client can trigger /api/summarize (Option 1)
+  return NextResponse.json({ ok: true, arxivId: paper.arxivId, shouldSummarize });
 }
 
 export async function DELETE(req: Request) {
@@ -114,4 +127,29 @@ export async function DELETE(req: Request) {
 
   await prisma.savedPaper.delete({ where: { arxivId } });
   return NextResponse.json({ ok: true });
+}
+
+export async function PATCH(req: Request) {
+  try {
+    const body = await req.json();
+    const arxivId = String(body?.arxivId ?? "").trim();
+    const note = String(body?.note ?? "");
+
+    if (!arxivId) {
+      return NextResponse.json({ error: "arxivId is required" }, { status: 400 });
+    }
+
+    const updated = await prisma.savedPaper.update({
+      where: { arxivId },
+      data: { note },
+    });
+
+    // keep response light
+    return NextResponse.json({ ok: true, item: { arxivId: updated.arxivId, note: updated.note } });
+  } catch (e: any) {
+    return NextResponse.json(
+      { error: "Failed to update note", detail: String(e?.message ?? e) },
+      { status: 500 }
+    );
+  }
 }

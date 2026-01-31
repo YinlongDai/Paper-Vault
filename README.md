@@ -1,36 +1,156 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 📚 Paper Vault
+**This project is 100% vibe coded.**
+Paper Vault is a lightweight research paper manager built with **Next.js (App Router)**, **Prisma**, and **SQLite**.
 
-## Getting Started
+It allows you to search papers (arXiv + OpenAlex), save them locally, organize with labels, take Markdown notes, view PDFs inline, and optionally generate AI summaries.
 
-First, run the development server:
+---
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+## ✨ Features
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- 🔍 Search papers from arXiv and OpenAlex
+- 💾 Save papers locally
+- 🏷️ Add / remove labels
+- 📝 Markdown notes per paper
+- 📄 Inline PDF viewer
+- 🤖 Optional AI-generated paper summaries
+- 🗄️ Local SQLite database (zero setup)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+---
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 📦 Installation
 
-## Learn More
+### 1️⃣ Clone the repository
 
-To learn more about Next.js, take a look at the following resources:
+    git clone https://github.com/your-username/paper-vault.git
+    cd paper-vault
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 2️⃣ Install dependencies
 
-## Deploy on Vercel
+    npm install
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+(Or `pnpm install` / `yarn`)
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+---
+
+## 🔐 Environment Variables
+
+This project uses two environment files:
+
+- `.env` → used by Prisma
+- `.env.local` → used by Next.js and API routes
+
+---
+
+### 3️⃣ Create env files from template
+
+    cp .env.example .env
+    cp .env.example .env.local
+
+---
+
+### 4️⃣ Edit `.env`
+
+    DATABASE_URL="file:./dev.db"
+
+This configures Prisma to use a local SQLite database.
+
+---
+
+### 5️⃣ Edit `.env.local` (optional, for AI summaries)
+
+    GEMINI_API_KEY=your_api_key_here
+    GEMINI_MODEL=models/gemini-2.5-flash
+
+If this is not set, the app will still work but AI summaries will be disabled.
+
+---
+
+## 🗄️ Database Setup (Prisma)
+
+### 6️⃣ Generate Prisma client
+
+    npx prisma generate
+
+---****
+
+### 7️⃣ Run database migrations
+
+    npx prisma migrate dev
+
+This will:
+- Create `dev.db`
+- Apply all migrations
+- Keep schema and database in sync
+
+`dev.db` is local-only and should not be committed.
+
+---
+
+## ▶️ Run the App
+
+### 8️⃣ Start the development server
+
+    npm run dev
+
+Open the app at:
+
+    http://localhost:3000
+
+---
+
+## 🧪 Optional: Inspect the Database
+
+    npx prisma studio
+
+This opens a GUI to inspect:
+- saved papers
+- labels
+- notes
+- AI summaries
+
+---
+
+## 📁 Git & File Policy
+
+### ✅ Commit these files
+- `prisma/schema.prisma`
+- `prisma/migrations/**`
+- `.env.example`
+
+### ❌ Do NOT commit these files
+- `.env`
+- `.env.local`
+- `dev.db`
+
+These should be ignored via `.gitignore`.
+
+---
+
+## 🤖 AI Summary Workflow (Optional)
+
+1. Save a paper
+2. Backend downloads the PDF
+3. PDF + prompt are sent to Gemini
+4. Summary is stored in the database
+5. Summary appears on the paper detail page
+
+Notes:
+- Summaries are generated once per paper
+- Stored permanently
+- Separate from user notes
+
+---
+
+## 🧠 Philosophy
+
+Paper Vault is intentionally:
+- Local-first
+- Minimal
+- Hackable
+- No authentication
+- No cloud lock-in
+
+---

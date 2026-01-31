@@ -10,11 +10,17 @@ It allows you to search papers (arXiv + OpenAlex), save them locally, organize w
 ## ✨ Features
 
   🔍 Search papers from arXiv and OpenAlex
+
   💾 Save papers locally
+  
   🏷️ Add / remove labels
+
   📝 Markdown notes per paper
+
   📄 Inline PDF viewer
+
   🤖 Optional AI-generated paper summaries
+
   🗄️ Local SQLite database (zero **setup**)
 
 ---
@@ -37,6 +43,7 @@ It allows you to search papers (arXiv + OpenAlex), save them locally, organize w
 This project uses two environment files:
 
   `.env` → used by Prisma
+  ****
   `.env.local` → used by Next.js and API routes
 
 ### 3️⃣ Create env files from template

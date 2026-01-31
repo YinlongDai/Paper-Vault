@@ -26,8 +26,6 @@ It allows you to search papers (arXiv + OpenAlex), save them locally, organize w
     git clone https://github.com/your-username/paper-vault.git
     cd paper-vault
 
----
-
 ### 2️⃣ Install dependencies
 
     npm install
@@ -41,22 +39,16 @@ This project uses two environment files:
 - `.env` → used by Prisma
 - `.env.local` → used by Next.js and API routes
 
----
-
 ### 3️⃣ Create env files from template
 
     cp .env.example .env
     cp .env.example .env.local
-
----
 
 ### 4️⃣ Edit `.env`
 
     DATABASE_URL="file:./dev.db"
 
 This configures Prisma to use a local SQLite database.
-
----
 
 ### 5️⃣ Edit `.env.local` (optional, for AI summaries)
 
@@ -72,8 +64,6 @@ If this is not set, the app will still work but AI summaries will be disabled.
 ### 6️⃣ Generate Prisma client
 
     npx prisma generate
-
----****
 
 ### 7️⃣ Run database migrations
 
@@ -102,7 +92,7 @@ Open the app at:
 
 ## 🤖 AI Summary Workflow (Optional)
 
-1. Save a paper
+1. Save a **paper**
 2. Backend downloads the PDF
 3. PDF + prompt are sent to Gemini
 4. Summary is stored in the database
@@ -123,5 +113,3 @@ Paper Vault is intentionally:
 - Hackable
 - No authentication
 - No cloud lock-in
-
----

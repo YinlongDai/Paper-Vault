@@ -1,16 +1,28 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/auth";
 
 const DEFAULT_LABELS = ["Feature Learning", "Robotic Foundation Model", "World Model"];
 
 async function ensureDefaultLabels() {
-  for (const name of DEFAULT_LABELS) {
-    await prisma.label.upsert({
-      where: { name },
-      update: {},
-      create: { name },
-    });
-  }
+  const count = await prisma.label.count();
+  if (count > 0) return;
+
+  await prisma.label.createMany({
+    data: DEFAULT_LABELS.map((name) => ({ name })),
+    skipDuplicates: true,
+  });
+}
+
+async function requireAdmin() {
+  const session = await getServerSession(authOptions);
+  const admin = String(process.env.ADMIN_GITHUB_USERNAME ?? "").trim();
+  const username = String((session as any)?.user?.login ?? (session as any)?.user?.name ?? "").trim();
+
+  if (!session) return { ok: false as const, status: 401 as const, msg: "Unauthorized" };
+  if (!admin || username !== admin) return { ok: false as const, status: 403 as const, msg: "Forbidden" };
+  return { ok: true as const };
 }
 
 export async function GET(req: Request) {
@@ -39,9 +51,11 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const gate = await requireAdmin();
+  if (!gate.ok) return NextResponse.json({ error: gate.msg }, { status: gate.status });
+
   const body = await req.json();
 
-  // Create label
   if (body?.kind === "label") {
     const name = String(body?.name ?? "").trim();
     if (!name) return NextResponse.json({ error: "Label name is required" }, { status: 400 });
@@ -55,12 +69,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ label });
   }
 
-  // Save paper + assign labels
   const p = body;
-  const labelNames: string[] = Array.isArray(p?.labelNames) ? p.labelNames : [];
+  const labelNamesRaw: string[] = Array.isArray(p?.labelNames) ? p.labelNames : [];
+  const labelNames = Array.from(new Set(labelNamesRaw.map((x) => String(x ?? "").trim()).filter(Boolean)));
 
-  // Summarize only if we don't already have a cached AI summary.
-  // (This covers first-save and also retries when a previous summarize failed.)
   const existing = await prisma.savedPaper.findUnique({
     where: { arxivId: p.arxivId },
     select: { aiSummary: true },
@@ -76,8 +88,6 @@ export async function POST(req: Request) {
       pdfUrl: p.pdfUrl,
       absUrl: p.absUrl,
       published: p.published,
-      // Do NOT update note here
-      // Do NOT update aiSummary here
     },
     create: {
       arxivId: p.arxivId,
@@ -92,7 +102,6 @@ export async function POST(req: Request) {
     },
   });
 
-  // Ensure labels exist
   for (const raw of labelNames) {
     const name = String(raw ?? "").trim();
     if (!name) continue;
@@ -103,7 +112,6 @@ export async function POST(req: Request) {
     });
   }
 
-  // Replace links
   await prisma.savedPaperLabel.deleteMany({ where: { paperId: paper.id } });
 
   if (labelNames.length > 0) {
@@ -113,38 +121,52 @@ export async function POST(req: Request) {
     });
   }
 
-  // Return shouldSummarize so the client can trigger /api/summarize (Option 1)
   return NextResponse.json({ ok: true, arxivId: paper.arxivId, shouldSummarize });
 }
 
 export async function DELETE(req: Request) {
+  const gate = await requireAdmin();
+  if (!gate.ok) return NextResponse.json({ error: gate.msg }, { status: gate.status });
+
   const { searchParams } = new URL(req.url);
+  const type = searchParams.get("type");
   const arxivId = searchParams.get("arxivId") ?? "";
 
-  if (!arxivId.trim()) {
-    return NextResponse.json({ error: "arxivId is required" }, { status: 400 });
+  if (type === "label") {
+    const name = String(searchParams.get("name") ?? "").trim();
+    if (!name) return NextResponse.json({ error: "name is required" }, { status: 400 });
+
+    const label = await prisma.label.findUnique({ where: { name } });
+    if (!label) return NextResponse.json({ ok: true, deleted: false });
+
+    await prisma.savedPaperLabel.deleteMany({ where: { labelId: label.id } });
+    await prisma.label.delete({ where: { id: label.id } });
+
+    return NextResponse.json({ ok: true, deleted: true });
   }
+
+  if (!arxivId.trim()) return NextResponse.json({ error: "arxivId is required" }, { status: 400 });
 
   await prisma.savedPaper.delete({ where: { arxivId } });
   return NextResponse.json({ ok: true });
 }
 
 export async function PATCH(req: Request) {
+  const gate = await requireAdmin();
+  if (!gate.ok) return NextResponse.json({ error: gate.msg }, { status: gate.status });
+
   try {
     const body = await req.json();
     const arxivId = String(body?.arxivId ?? "").trim();
     const note = String(body?.note ?? "");
 
-    if (!arxivId) {
-      return NextResponse.json({ error: "arxivId is required" }, { status: 400 });
-    }
+    if (!arxivId) return NextResponse.json({ error: "arxivId is required" }, { status: 400 });
 
     const updated = await prisma.savedPaper.update({
       where: { arxivId },
       data: { note },
     });
 
-    // keep response light
     return NextResponse.json({ ok: true, item: { arxivId: updated.arxivId, note: updated.note } });
   } catch (e: any) {
     return NextResponse.json(

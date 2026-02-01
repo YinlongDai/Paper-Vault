@@ -101,6 +101,7 @@ type Paper = {
   absUrl: string;
   pdfUrl: string;
   labelNames?: string[];
+  createdAt?: string; // ISO string from API; used as saved date
 };
 
 type Label = {
@@ -113,6 +114,10 @@ export default function SavedPage() {
   const [items, setItems] = useState<Paper[]>([]);
   const [labels, setLabels] = useState<Label[]>([]);
   const [activeLabel, setActiveLabel] = useState<string>("All");
+  const [searchText, setSearchText] = useState<string>("");
+  const [searchField, setSearchField] = useState<"title" | "author">("title");
+  const [sortBy, setSortBy] = useState<"saved" | "submitted">("saved");
+  const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
   const [loading, setLoading] = useState(false);
   const [noteEditing, setNoteEditing] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
@@ -121,11 +126,23 @@ export default function SavedPage() {
   const [addLabelChoice, setAddLabelChoice] = useState<string>("");
   const [addLabelNewName, setAddLabelNewName] = useState("");
   const [labelPickerMode, setLabelPickerMode] = useState<"add" | "remove">("add");
+  const [openMenuFor, setOpenMenuFor] = useState<string | null>(null);
+  const [deleteLabelOpen, setDeleteLabelOpen] = useState(false);
+  const [deleteLabelChoice, setDeleteLabelChoice] = useState<string>("");
   
 
   const router = useRouter();
   const searchParams = useSearchParams();
   const selectedId = (searchParams.get("paper") ?? "").trim();
+
+  function parseMs(s?: string | null) {
+    const ms = Date.parse(String(s || ""));
+    return Number.isFinite(ms) ? ms : 0;
+  }
+
+  function norm(s: string) {
+    return String(s || "").toLowerCase();
+  }
 
   async function loadItems() {
     setLoading(true);
@@ -141,7 +158,14 @@ export default function SavedPage() {
   async function loadLabels() {
     const r = await fetch("/api/saved?type=labels");
     const j = await r.json();
-    setLabels(j.labels ?? []);
+    const nextLabels: Label[] = j.labels ?? [];
+    setLabels(nextLabels);
+    setDeleteLabelChoice((cur) => {
+      const c = String(cur || "").trim();
+      if (!c) return c;
+      return nextLabels.some((l) => l.name === c) ? c : "";
+    });
+    return;
   }
 
   async function addLabel() {
@@ -164,6 +188,39 @@ export default function SavedPage() {
     }
 
     await loadLabels();
+  }
+
+  async function deleteLabel() {
+    if (labels.length === 0) return;
+
+    const trimmed = String(deleteLabelChoice || "").trim();
+    if (!trimmed) return;
+
+    const ok = window.confirm(
+      `Delete label "${trimmed}"?\n\nThis will remove the label from ALL saved papers, but will NOT remove any papers.`
+    );
+    if (!ok) return;
+
+    const r = await fetch(`/api/saved?type=label&name=${encodeURIComponent(trimmed)}`, {
+      method: "DELETE",
+    });
+
+    if (!r.ok) {
+      const t = await r.text();
+      console.error("Delete label failed:", r.status, t);
+      alert("Failed to delete label. Check console for details.");
+      return;
+    }
+
+    if (activeLabel === trimmed) {
+      setActiveLabel("All");
+    }
+
+    setDeleteLabelOpen(false);
+    setDeleteLabelChoice("");
+
+    await loadLabels();
+    await loadItems();
   }
 
   async function addLabelToSelectedPaper() {
@@ -325,9 +382,42 @@ export default function SavedPage() {
   }, []);
 
   const filtered = useMemo(() => {
-    if (activeLabel === "All") return items;
-    return items.filter((p) => (p.labelNames ?? []).includes(activeLabel));
-  }, [items, activeLabel]);
+    // 1) label filter
+    let out =
+      activeLabel === "All" ? items : items.filter((p) => (p.labelNames ?? []).includes(activeLabel));
+
+    // 2) search filter (title / author)
+    const q = searchText.trim().toLowerCase();
+    if (q) {
+      out = out.filter((p) => {
+        const hay = searchField === "author" ? norm(p.authors) : norm(p.title);
+        return hay.includes(q);
+      });
+    }
+
+    // 3) sort
+    const key = (p: Paper) => {
+      if (sortBy === "submitted") return parseMs(p.published);
+      // saved date: missing -> earliest
+      return parseMs(p.createdAt);
+    };
+
+    const dir = sortOrder === "asc" ? 1 : -1;
+
+    return [...out].sort((a, b) => {
+      const ka = key(a);
+      const kb = key(b);
+      if (ka !== kb) return ka < kb ? -1 * dir : 1 * dir;
+
+      const ta = norm(a.title);
+      const tb = norm(b.title);
+      if (ta !== tb) return ta < tb ? -1 : 1;
+
+      const ia = norm(a.arxivId);
+      const ib = norm(b.arxivId);
+      return ia < ib ? -1 : ia > ib ? 1 : 0;
+    });
+  }, [items, activeLabel, searchText, searchField, sortBy, sortOrder]);
 
   const selectedPaper = useMemo(() => {
     if (!selectedId) return null;
@@ -354,7 +444,10 @@ export default function SavedPage() {
   }
 
   return (
-    <main style={{ maxWidth: 980, margin: "0 auto", padding: 24, fontFamily: "system-ui" }}>
+    <main
+      onClick={() => setOpenMenuFor(null)}
+      style={{ maxWidth: 980, margin: "0 auto", padding: 24, fontFamily: "system-ui" }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
         <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>⭐ Saved Papers</h1>
         <a href="/" style={{ fontSize: 14 }}>
@@ -412,6 +505,195 @@ export default function SavedPage() {
             >
               +
             </button>
+
+            <button
+              onClick={() => {
+                if (labels.length === 0) return;
+                setDeleteLabelOpen((v) => {
+                  const next = !v;
+                  if (next) {
+                    const first = labels[0]?.name || "";
+                    setDeleteLabelChoice((cur) => (String(cur || "").trim() ? cur : first));
+                  }
+                  return next;
+                });
+              }}
+              title="Delete label"
+              style={{
+                padding: "6px 10px",
+                borderRadius: 999,
+                border: "1px solid #ddd",
+                cursor: labels.length === 0 ? "not-allowed" : "pointer",
+                fontWeight: 900,
+                opacity: labels.length === 0 ? 0.45 : 1,
+                background: "transparent",
+              }}
+              disabled={labels.length === 0}
+            >
+              −
+            </button>
+            {deleteLabelOpen && labels.length > 0 && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  padding: "6px 10px",
+                  borderRadius: 999,
+                  border: "1px solid #eee",
+                  background: "color-mix(in srgb, CanvasText 3%, transparent)",
+                }}
+              >
+                <select
+                  value={deleteLabelChoice}
+                  onChange={(e) => setDeleteLabelChoice(e.target.value)}
+                  style={{
+                    fontSize: 13,
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    border: "1px solid #ddd",
+                    background: "transparent",
+                  }}
+                >
+                  {labels.map((l) => (
+                    <option key={l.id} value={l.name}>
+                      {l.name}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  onClick={deleteLabel}
+                  style={{
+                    fontSize: 13,
+                    padding: "4px 10px",
+                    borderRadius: 999,
+                    border: "1px solid #ddd",
+                    fontWeight: 800,
+                    cursor: "pointer",
+                    background: "transparent",
+                  }}
+                  disabled={!String(deleteLabelChoice || "").trim()}
+                >
+                  Delete
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeleteLabelOpen(false);
+                    setDeleteLabelChoice("");
+                  }}
+                  style={{
+                    fontSize: 13,
+                    padding: "4px 10px",
+                    borderRadius: 999,
+                    border: "1px solid #ddd",
+                    cursor: "pointer",
+                    background: "transparent",
+                    opacity: 0.85,
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+          {/* Search + sort */}
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+              marginTop: 12,
+              alignItems: "center",
+            }}
+          >
+            <input
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder={searchField === "author" ? "Search authors…" : "Search titles…"}
+              style={{
+                flex: "1 1 280px",
+                padding: "8px 10px",
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                background: "transparent",
+              }}
+            />
+
+            <select
+              value={searchField}
+              onChange={(e) => setSearchField(e.target.value as any)}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                background: "transparent",
+                fontSize: 13,
+              }}
+              title="Search field"
+            >
+              <option value="title">Title</option>
+              <option value="author">Author</option>
+            </select>
+
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as any)}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                background: "transparent",
+                fontSize: 13,
+              }}
+              title="Sort by"
+            >
+              <option value="saved">Saved date</option>
+              <option value="submitted">Submitted date</option>
+            </select>
+
+            <select
+              value={sortOrder}
+              onChange={(e) => setSortOrder(e.target.value as any)}
+              style={{
+                padding: "8px 10px",
+                borderRadius: 10,
+                border: "1px solid #ddd",
+                background: "transparent",
+                fontSize: 13,
+              }}
+              title="Sort order"
+            >
+              <option value="desc">Newest first</option>
+              <option value="asc">Oldest first</option>
+            </select>
+
+            {(searchText.trim() || activeLabel !== "All") && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchText("");
+                  setSearchField("title");
+                  setActiveLabel("All");
+                }}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  background: "transparent",
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+                title="Clear filters"
+              >
+                Clear
+              </button>
+            )}
           </div>
         </>
       )}
@@ -654,12 +936,67 @@ export default function SavedPage() {
                 <a href={selectedPaper.pdfUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
                   pdf
                 </a>
-                <button
-                  onClick={() => removePaper(selectedPaper.arxivId)}
-                  style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd" }}
+
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ position: "relative", display: "inline-block" }}
                 >
-                  Remove
-                </button>
+                  <button
+                    type="button"
+                    aria-label="More actions"
+                    title="More actions"
+                    onClick={() =>
+                      setOpenMenuFor((v) => (v === selectedPaper.arxivId ? null : selectedPaper.arxivId))
+                    }
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 8,
+                      border: "1px solid #ddd",
+                      background: "transparent",
+                    }}
+                  >
+                    ⋯
+                  </button>
+
+                  {openMenuFor === selectedPaper.arxivId && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        right: 0,
+                        top: "calc(100% + 8px)",
+                        minWidth: 140,
+                        border: "1px solid #eee",
+                        borderRadius: 10,
+                        background: "Canvas",
+                        color: "CanvasText",
+                        boxShadow: "0 8px 30px rgba(0,0,0,0.08)",
+                        overflow: "hidden",
+                        zIndex: 10,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenMenuFor(null);
+                          removePaper(selectedPaper.arxivId);
+                        }}
+                        style={{
+                          width: "100%",
+                          textAlign: "left",
+                          padding: "10px 12px",
+                          border: "none",
+                          background: "transparent",
+                          cursor: "pointer",
+                          fontSize: 13,
+                          color: "CanvasText",
+                          fontWeight: 600,
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div
@@ -897,12 +1234,64 @@ export default function SavedPage() {
                   <a href={p.pdfUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
                     pdf
                   </a>
-                  <button
-                    onClick={() => removePaper(p.arxivId)}
-                    style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd" }}
-                  >
-                    Remove
-                  </button>
+
+                  <div onClick={(e) => e.stopPropagation()} style={{ position: "relative", display: "inline-block" }}>
+                    <button
+                      type="button"
+                      aria-label="More actions"
+                      title="More actions"
+                      onClick={() =>
+                        setOpenMenuFor((v) => (v === p.arxivId ? null : p.arxivId))
+                      }
+                      style={{
+                        padding: "6px 10px",
+                        borderRadius: 8,
+                        border: "1px solid #ddd",
+                        background: "transparent",
+                      }}
+                    >
+                      ⋯
+                    </button>
+
+                    {openMenuFor === p.arxivId && (
+                      <div
+                        style={{
+                          position: "absolute",
+                          right: 0,
+                          top: "calc(100% + 8px)",
+                          minWidth: 140,
+                          border: "1px solid #eee",
+                          borderRadius: 10,
+                          background: "Canvas",
+                          color: "CanvasText",
+                          boxShadow: "0 8px 30px rgba(0,0,0,0.08)",
+                          overflow: "hidden",
+                          zIndex: 10,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOpenMenuFor(null);
+                            removePaper(p.arxivId);
+                          }}
+                          style={{
+                            width: "100%",
+                            textAlign: "left",
+                            padding: "10px 12px",
+                            border: "none",
+                            background: "transparent",
+                            cursor: "pointer",
+                            fontSize: 13,
+                            color: "CanvasText",
+                            fontWeight: 600,
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 

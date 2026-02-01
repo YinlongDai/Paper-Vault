@@ -400,9 +400,11 @@ export default function Home() {
                   {!savedMap[p.arxivId] ? (
                     <button
                       onClick={() => openSaveWithLabels(p)}
+                      aria-label="Save"
+                      title="Save"
                       style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd" }}
                     >
-                      Save
+                      ⭐
                     </button>
                   ) : (
                     <button

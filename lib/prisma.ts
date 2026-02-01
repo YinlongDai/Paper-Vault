@@ -1,19 +1,36 @@
 import { PrismaClient } from "@prisma/client";
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
-import path from "node:path";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { Pool } from "pg";
 
-const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
+declare global {
+  // eslint-disable-next-line no-var
+  var __prisma: PrismaClient | undefined;
+  // eslint-disable-next-line no-var
+  var __pgPool: Pool | undefined;
+}
 
-// Make SQLite URL absolute to avoid "relative path resolves from node_modules/.prisma/..." issues
-// (common in Prisma 7 setups).
-const envUrl = process.env.DATABASE_URL; // e.g. file:./dev.db
-const absUrl =
-  envUrl?.startsWith("file:")
-    ? "file:" + path.resolve(process.cwd(), envUrl.replace("file:", ""))
-    : "file:" + path.resolve(process.cwd(), "dev.db");
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  throw new Error("DATABASE_URL is not set");
+}
 
-const adapter = new PrismaBetterSqlite3({ url: absUrl });
+// Reuse across hot reloads (dev)
+const pool =
+  global.__pgPool ??
+  new Pool({
+    connectionString,
+  });
 
-export const prisma = globalForPrisma.prisma ?? new PrismaClient({ adapter });
+global.__pgPool = pool;
 
-globalForPrisma.prisma = prisma;
+const adapter = new PrismaPg(pool);
+
+export const prisma =
+  global.__prisma ??
+  new PrismaClient({
+    adapter,
+  });
+
+if (process.env.NODE_ENV !== "production") {
+  global.__prisma = prisma;
+}

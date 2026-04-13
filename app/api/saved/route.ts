@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getServerSession } from "next-auth/next";
-import { authOptions } from "@/auth";
 
 const DEFAULT_LABELS = ["Feature Learning", "Robotic Foundation Model", "World Model"];
 
@@ -13,16 +11,6 @@ async function ensureDefaultLabels() {
     data: DEFAULT_LABELS.map((name) => ({ name })),
     skipDuplicates: true,
   });
-}
-
-async function requireAdmin() {
-  const session = await getServerSession(authOptions);
-  const admin = String(process.env.ADMIN_GITHUB_USERNAME ?? "").trim();
-  const username = String((session as any)?.user?.login ?? (session as any)?.user?.name ?? "").trim();
-
-  if (!session) return { ok: false as const, status: 401 as const, msg: "Unauthorized" };
-  if (!admin || username !== admin) return { ok: false as const, status: 403 as const, msg: "Forbidden" };
-  return { ok: true as const };
 }
 
 export async function GET(req: Request) {
@@ -51,9 +39,6 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const gate = await requireAdmin();
-  if (!gate.ok) return NextResponse.json({ error: gate.msg }, { status: gate.status });
-
   const body = await req.json();
 
   if (body?.kind === "label") {
@@ -125,9 +110,6 @@ export async function POST(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  const gate = await requireAdmin();
-  if (!gate.ok) return NextResponse.json({ error: gate.msg }, { status: gate.status });
-
   const { searchParams } = new URL(req.url);
   const type = searchParams.get("type");
   const arxivId = searchParams.get("arxivId") ?? "";
@@ -152,9 +134,6 @@ export async function DELETE(req: Request) {
 }
 
 export async function PATCH(req: Request) {
-  const gate = await requireAdmin();
-  if (!gate.ok) return NextResponse.json({ error: gate.msg }, { status: gate.status });
-
   try {
     const body = await req.json();
     const arxivId = String(body?.arxivId ?? "").trim();

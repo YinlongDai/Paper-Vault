@@ -14,6 +14,39 @@ type MixedPaper = {
   doi?: string;
 };
 
+type FetchTextResult = {
+  ok: boolean;
+  status: number;
+  ms: number;
+  text: string;
+  error?: string;
+};
+
+async function fetchTextWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<FetchTextResult> {
+  const t0 = Date.now();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { ...init, signal: ctrl.signal });
+    const text = await r.text();
+    return { ok: r.ok, status: r.status, ms: Date.now() - t0, text };
+  } catch (e: any) {
+    return {
+      ok: false,
+      status: 0,
+      ms: Date.now() - t0,
+      text: "",
+      error: e?.name === "AbortError" ? `timeout_${timeoutMs}ms` : String(e),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function dateMs(s: string) {
   const ms = Date.parse(s);
   return Number.isFinite(ms) ? ms : 0;
@@ -145,10 +178,15 @@ async function fetchArxivByIds(ids: string[]): Promise<MixedPaper[]> {
 
   const url = `https://export.arxiv.org/api/query?id_list=${encodeURIComponent(uniq.join(","))}`;
 
-  const xml = await fetch(url, {
-    headers: { "User-Agent": "paper-vault/0.1 (self-hosted)" },
-    cache: "no-store",
-  }).then((r) => r.text());
+  const r = await fetchTextWithTimeout(
+    url,
+    {
+      headers: { "User-Agent": "paper-vault/0.1 (self-hosted)" },
+      cache: "no-store",
+    },
+    8000
+  );
+  const xml = r.text;
 
   const entries = xml.split("<entry>").slice(1).map((e) => "<entry>" + e);
 
@@ -385,25 +423,42 @@ async function fetchOpenAlex(
   }
 
   const collected: any[] = [];
-  let pageNum = firstPage;
 
-  while (collected.length < offsetInFirst + maxN) {
-    const pageUrl = worksUrl.replace("__PAGE__", encodeURIComponent(String(pageNum)));
-    const r = await fetch(pageUrl, { cache: "no-store" as any });
-    if (!r.ok) break;
+  const need = offsetInFirst + maxN;
+  const pagesNeeded = Math.max(1, Math.ceil(need / perPage));
+  const maxPages = Math.min(20, pagesNeeded); // keep runaway protection
 
-    const j: any = await r.json();
-    const rows: any[] = Array.isArray(j?.results) ? j.results : [];
-    if (rows.length === 0) break;
+  const pages: number[] = [];
+  for (let i = 0; i < maxPages; i++) pages.push(firstPage + i);
 
-    collected.push(...rows);
+  // Fetch multiple pages concurrently in small batches to reduce wall time.
+  const BATCH = 4;
 
-    if (rows.length < perPage) break;
+  outer: for (let i = 0; i < pages.length; i += BATCH) {
+    const batch = pages.slice(i, i + BATCH);
 
-    pageNum += 1;
+    const results = await Promise.all(
+      batch.map(async (pageNum) => {
+        const pageUrl = worksUrl.replace("__PAGE__", encodeURIComponent(String(pageNum)));
+        const r = await fetch(pageUrl, { cache: "no-store" as any });
+        if (!r.ok) return { ok: false, rows: [] as any[] };
 
-    // safety cap: avoid runaway
-    if (pageNum - firstPage > 20) break;
+        const j: any = await r.json();
+        const rows: any[] = Array.isArray(j?.results) ? j.results : [];
+        return { ok: true, rows };
+      })
+    );
+
+    // Preserve sequential stop behavior by consuming in-order.
+    for (const res of results) {
+      if (!res.ok) break outer;
+      if (!res.rows || res.rows.length === 0) break outer;
+
+      collected.push(...res.rows);
+
+      if (res.rows.length < perPage) break outer;
+      if (collected.length >= need) break outer;
+    }
   }
 
   const sliced = collected.slice(offsetInFirst, offsetInFirst + maxN);
@@ -528,35 +583,55 @@ export async function GET(req: Request) {
     `&sortBy=${encodeURIComponent(arxivApiSortBy)}` +
     `&sortOrder=${encodeURIComponent(sortOrder)}`;
 
-  const xml = await fetch(url, {
-    headers: { "User-Agent": "paper-vault/0.1 (self-hosted)" },
-    cache: "no-store",
-  }).then((r) => r.text());
+  // Fetch arXiv + OpenAlex concurrently (merge/dedup/rerank logic below stays unchanged)
+  const arxivFetchPromise = fetchTextWithTimeout(
+    url,
+    {
+      headers: { "User-Agent": "paper-vault/0.1 (self-hosted)" },
+      cache: "no-store",
+    },
+    8000
+  );
 
+  const oaT0 = Date.now();
+  const openalexPromise = fetchOpenAlex(
+    qq,
+    globalMode ? candidateMax : maxN,
+    globalMode ? 0 : startN,
+    field,
+    sortBy,
+    sortOrder
+  );
+
+  const [arxivFetch, openalexRaw] = await Promise.all([arxivFetchPromise, openalexPromise]);
+  const openalexMs = Date.now() - oaT0;
+
+  const xml = arxivFetch.text;
   const entries = xml.split("<entry>").slice(1).map((e) => "<entry>" + e);
+  const arxivEntryCount = entries.length;
 
-const arxivSortTs = new Map<string, number>();
+  const arxivSortTs = new Map<string, number>();
 
-const papers: MixedPaper[] = entries.map((e) => {
-  const idUrl = textBetween(e, "id");
-  const title = textBetween(e, "title").replace(/\s+/g, " ");
-  const summary = textBetween(e, "summary").replace(/\s+/g, " ");
-  const published = textBetween(e, "published");
-  const updated = textBetween(e, "updated");
-  const authors = allBetween(e, "name").join(", ");
-  const doi = textBetween(e, "arxiv:doi") || "";
+  const papers: MixedPaper[] = entries.map((e) => {
+    const idUrl = textBetween(e, "id");
+    const title = textBetween(e, "title").replace(/\s+/g, " ");
+    const summary = textBetween(e, "summary").replace(/\s+/g, " ");
+    const published = textBetween(e, "published");
+    const updated = textBetween(e, "updated");
+    const authors = allBetween(e, "name").join(", ");
+    const doi = textBetween(e, "arxiv:doi") || "";
 
-  const arxivId = idUrl.split("/abs/")[1] ?? idUrl;
-  const absUrl = idUrl;
-  const pdfUrl = idUrl.replace("/abs/", "/pdf/");
+    const arxivId = idUrl.split("/abs/")[1] ?? idUrl;
+    const absUrl = idUrl;
+    const pdfUrl = idUrl.replace("/abs/", "/pdf/");
 
-  // choose the timestamp that matches the arXiv sort mode
-  const tsStr = sortBy === "lastUpdatedDate" ? (updated || published) : (published || updated);
-  arxivSortTs.set(arxivId, dateMs(tsStr));
+    const tsStr = sortBy === "lastUpdatedDate" ? (updated || published) : (published || updated);
+    arxivSortTs.set(arxivId, dateMs(tsStr));
 
-  return { arxivId, title, summary, published, authors, absUrl, pdfUrl, doi, source: "arxiv" };
-});
-const papersFiltered = field === "author" ? papers.filter((p) => authorMatchesQuery(p.authors, qq)) : papers;
+    return { arxivId, title, summary, published, authors, absUrl, pdfUrl, doi, source: "arxiv" };
+  });
+
+  const papersFiltered = field === "author" ? papers.filter((p) => authorMatchesQuery(p.authors, qq)) : papers;
 
 // Build dedup set from arXiv results
 const seen = new Set<string>();
@@ -572,15 +647,6 @@ for (const p of papersFiltered) {
   const t = normTitle(p.title);
   if (t) seen.add(`title:${t}`);
 }
-
-const openalexRaw = await fetchOpenAlex(
-  qq,
-  globalMode ? candidateMax : maxN,
-  globalMode ? 0 : startN,
-  field,
-  sortBy,
-  sortOrder
-);
 
 // Collect arXiv IDs that OpenAlex links to
 const oaArxivIds: string[] = [];
@@ -677,13 +743,16 @@ for (const p of mixed) {
   }
 
   // Collision: keep arXiv over OpenAlex.
-  const existing = out[hitIdx];
+  const idx = typeof hitIdx === "string" ? Number(hitIdx) : hitIdx;
+  if (!Number.isFinite(idx)) throw new Error(`Invalid hitIdx: ${String(hitIdx)}`);
+
+  const existing = out[idx];
   if (existing?.source !== "arxiv" && p.source === "arxiv") {
-    out[hitIdx] = p;
+    out[idx] = p;
     // ensure all keys point to this retained item
-    considerKey(keyId, hitIdx);
-    considerKey(keyUrl, hitIdx);
-    considerKey(keyTitle, hitIdx);
+    considerKey(keyId, idx);
+    considerKey(keyUrl, idx);
+    considerKey(keyTitle, idx);
   }
   // else: keep existing (do nothing)
 }
@@ -710,5 +779,31 @@ const rerankedPool = rerankWithCitations(pool, sortBy, sortOrder);
 // Slice AFTER global sort for ANY non-relevance sort
 const paged = globalMode ? rerankedPool.slice(startN, startN + maxN) : rerankedPool;
 
-return NextResponse.json({ papers: paged });
+const meta = {
+  q: qq,
+  field,
+  sortBy,
+  sortOrder,
+  arxiv: {
+    ok: arxivFetch.ok,
+    status: arxivFetch.status,
+    ms: arxivFetch.ms,
+    entries: arxivEntryCount,
+    xmlLen: xml.length,
+    error: arxivFetch.error || "",
+  },
+  openalex: {
+    ms: openalexMs,
+    raw: openalexRaw.length,
+    filtered: openalexFiltered.length,
+  },
+  merged: {
+    pool: pool.length,
+    returned: paged.length,
+  },
+};
+
+console.log("[arxiv_api]", meta);
+
+return NextResponse.json({ papers: paged, meta });
 }

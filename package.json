@@ -6,13 +6,15 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "postinstall": "mkdir -p public && cp node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs public/pdf.worker.min.mjs"
   },
   "dependencies": {
     "@prisma/adapter-better-sqlite3": "^7.3.0",
     "@prisma/client": "^7.3.0",
     "better-sqlite3": "^12.6.2",
     "next": "16.1.4",
+    "pdfjs-dist": "^5.4.530",
     "prisma": "^7.3.0",
     "react": "19.2.3",
     "react-dom": "19.2.3"

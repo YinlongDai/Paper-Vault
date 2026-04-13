@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 const LABEL_PALETTE = [
@@ -30,23 +30,72 @@ function colorForLabel(name: string) {
 }
 
 function asEmbedPdfUrl(u: string) {
-  const s = String(u || "").trim();
+  let s = String(u || "").trim();
   if (!s) return "";
 
-  // Prefer direct PDF links.
+  // If URL has no scheme (e.g., "arxiv.org/pdf/..."), treat it as https.
+  if (!/^https?:\/\//i.test(s)) {
+    // Allow protocol-relative URLs too.
+    if (s.startsWith("//")) s = "https:" + s;
+    else s = "https://" + s.replace(/^\/+/, "");
+  }
+
+  // Avoid mixed-content issues.
+  s = s.replace(/^http:\/\//i, "https://");
+
+  // Prefer direct arXiv PDF links.
   if (/arxiv\.org\/abs\//i.test(s)) {
-    return s.replace(/arxiv\.org\/abs\//i, "arxiv.org/pdf/") + ".pdf";
+    s = s.replace(/arxiv\.org\/abs\//i, "arxiv.org/pdf/");
+    if (!/\.pdf(\?.*)?$/i.test(s)) s = s + ".pdf";
+    return s;
   }
 
   // If it already looks like a PDF, keep it.
   if (/\.pdf(\?.*)?$/i.test(s)) return s;
 
   // arXiv pdf links sometimes omit .pdf
-  if (/arxiv\.org\/pdf\//i.test(s) && !/\.pdf(\?.*)?$/i.test(s)) {
+  if (/arxiv\.org\/pdf\//i.test(s)) {
     return s + ".pdf";
   }
 
   return s;
+}
+
+function BrowserPdfViewer({ url, title }: { url: string; title?: string }) {
+  const currentUrl = String(url || "").trim();
+  const proxied = currentUrl ? `/api/pdf?url=${encodeURIComponent(currentUrl)}` : "";
+
+  if (!currentUrl) return null;
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ fontSize: 13, opacity: 0.8 }}>{title || "PDF"}</div>
+        <a href={proxied} target="_blank" rel="noreferrer" style={{ fontSize: 13, marginLeft: "auto" }}>
+          Open PDF
+        </a>
+      </div>
+
+      <object
+        data={proxied}
+        type="application/pdf"
+        style={{
+          marginTop: 10,
+          width: "100%",
+          height: "80vh",
+          border: "1px solid #eee",
+          borderRadius: 12,
+          overflow: "hidden",
+        }}
+      >
+        <iframe
+          src={proxied}
+          title={title || "PDF"}
+          style={{ width: "100%", height: "80vh", border: "none" }}
+        />
+      </object>
+    </div>
+  );
 }
 
 function escapeHtml(s: string) {
@@ -109,7 +158,7 @@ type Label = {
   name: string;
 };
 
-export default function SavedPage() {
+function SavedPageInner() {
   const [summaryGenerating, setSummaryGenerating] = useState(false);
   const [items, setItems] = useState<Paper[]>([]);
   const [labels, setLabels] = useState<Label[]>([]);
@@ -314,7 +363,7 @@ export default function SavedPage() {
   }
 
   async function removePaper(arxivId: string) {
-    const r = await fetch(`/api/saved?arxivId=${encodeURIComponent(arxivId)}`, {
+    const r = await fetch(`/api/saved/${encodeURIComponent(arxivId)}`, {
       method: "DELETE",
     });
 
@@ -1080,21 +1129,13 @@ export default function SavedPage() {
 
               <h2 style={{ marginTop: 18, fontSize: 16, fontWeight: 800 }}>PDF</h2>
               <div style={{ marginTop: 8, fontSize: 13, opacity: 0.75 }}>
-                If the PDF does not load here, use the PDF link above (some hosts block embedding).
+                Embedded via the browser PDF viewer (served through our /api/pdf proxy to avoid CORS).
               </div>
 
-              <div
-                style={{
-                  marginTop: 10,
-                  border: "1px solid #eee",
-                  borderRadius: 12,
-                  overflow: "hidden",
-                }}
-              >
-                <iframe
-                  title="Paper PDF"
-                  src={asEmbedPdfUrl(selectedPaper.pdfUrl)}
-                  style={{ width: "100%", height: "75vh", border: "none" }}
+              <div style={{ marginTop: 10 }}>
+                <BrowserPdfViewer
+                  url={asEmbedPdfUrl(selectedPaper.pdfUrl) || asEmbedPdfUrl(selectedPaper.absUrl)}
+                  title={"Paper PDF"}
                 />
               </div>
               <h2 style={{ marginTop: 18, fontSize: 16, fontWeight: 800 }}>AI Summary</h2>
@@ -1301,5 +1342,13 @@ export default function SavedPage() {
         </div>
       )}
     </main>
+  );
+}
+
+export default function SavedPage() {
+  return (
+    <Suspense fallback={null}>
+      <SavedPageInner />
+    </Suspense>
   );
 }

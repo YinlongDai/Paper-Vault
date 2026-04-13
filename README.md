@@ -1,4 +1,4 @@
-# 📚 My Paper Vault (Local)
+# 📚 My Paper Vault
 
 **A lightweight, local-first research paper manager.**
 
@@ -33,8 +33,9 @@ Ensure you have the following installed:
 Clone the repository and install the dependencies:
 
 ```bash
-# Navigate to the project directory
-cd paper-vault-local
+# Clone the repository
+git clone https://github.com/YinlongDai/Paper-Vault.git
+cd Paper-Vault
 
 # Install all required packages
 npm install

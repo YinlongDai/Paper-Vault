@@ -9,33 +9,40 @@ async function ensureDefaultLabels() {
 
   await prisma.label.createMany({
     data: DEFAULT_LABELS.map((name) => ({ name })),
-    skipDuplicates: true,
   });
 }
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const type = searchParams.get("type");
+  try {
+    const { searchParams } = new URL(req.url);
+    const type = searchParams.get("type");
 
-  if (type === "labels") {
-    await ensureDefaultLabels();
-    const labels = await prisma.label.findMany({ orderBy: { name: "asc" } });
-    return NextResponse.json({ labels });
+    if (type === "labels") {
+      await ensureDefaultLabels();
+      const labels = await prisma.label.findMany({ orderBy: { name: "asc" } });
+      return NextResponse.json({ labels });
+    }
+
+    const items = await prisma.savedPaper.findMany({
+      orderBy: { createdAt: "desc" },
+      include: {
+        labels: { include: { label: true } },
+      },
+    });
+
+    const itemsWithLabels = items.map((p) => ({
+      ...p,
+      labelNames: p.labels.map((x) => x.label.name),
+    }));
+
+    return NextResponse.json({ items: itemsWithLabels });
+  } catch (e: any) {
+    console.error("[api/saved GET] error:", e);
+    return NextResponse.json(
+      { error: "Failed to fetch saved items", detail: String(e?.message ?? e) },
+      { status: 500 }
+    );
   }
-
-  const items = await prisma.savedPaper.findMany({
-    orderBy: { createdAt: "desc" },
-    include: {
-      labels: { include: { label: true } },
-    },
-  });
-
-  const itemsWithLabels = items.map((p) => ({
-    ...p,
-    labelNames: p.labels.map((x) => x.label.name),
-  }));
-
-  return NextResponse.json({ items: itemsWithLabels });
 }
 
 export async function POST(req: Request) {

@@ -79,13 +79,23 @@ a {
   padding: 0 20px;
 }
 
+/* No hard bottom line: the frosted bar extends a little below its content and fades out (feather). */
 .topbar {
+  --feather: 18px;
   position: sticky;
   top: 0;
   z-index: 30;
-  background: color-mix(in srgb, var(--bg) 82%, transparent);
-  backdrop-filter: saturate(1.4) blur(10px);
-  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--feather);
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  backdrop-filter: saturate(1.4) blur(12px);
+  -webkit-backdrop-filter: saturate(1.4) blur(12px);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--feather)), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--feather)), transparent);
+  pointer-events: none;
+}
+
+.topbar-inner {
+  pointer-events: auto;
 }
 
 .topbar-inner {
@@ -98,11 +108,37 @@ a {
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-weight: 700;
-  font-size: 16px;
+  gap: 9px;
+  font-weight: 800;
+  font-size: 17px;
+  letter-spacing: -0.02em;
   text-decoration: none;
   white-space: nowrap;
+}
+
+.brand-mark {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent), #ec4899 55%, #06b6d4);
+  background-size: 200% 200%;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 35%, transparent);
+  animation: mark-shift 10s ease-in-out infinite alternate;
+  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1.4);
+}
+
+.brand:hover .brand-mark {
+  transform: rotate(-8deg) scale(1.06);
+}
+
+@keyframes mark-shift {
+  to {
+    background-position: 100% 100%;
+  }
 }
 
 .nav {
@@ -133,7 +169,7 @@ a {
 }
 
 .page {
-  padding-top: 28px;
+  padding-top: 12px;
   padding-bottom: 80px;
 }
 
@@ -1336,32 +1372,6 @@ button.paper-title:hover {
   from {
     opacity: 0;
     transform: translateY(12px);
-  }
-}
-
-.hero {
-  position: relative;
-  isolation: isolate;
-}
-
-.hero::before {
-  content: "";
-  position: absolute;
-  inset: -60px 0 auto;
-  height: 260px;
-  z-index: -1;
-  background:
-    radial-gradient(40% 60% at 15% 30%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 70%),
-    radial-gradient(35% 55% at 85% 20%, color-mix(in srgb, #ec4899 14%, transparent), transparent 70%),
-    radial-gradient(30% 50% at 55% 80%, color-mix(in srgb, #06b6d4 12%, transparent), transparent 70%);
-  filter: blur(8px);
-  animation: drift 16s ease-in-out infinite alternate;
-  pointer-events: none;
-}
-
-@keyframes drift {
-  to {
-    transform: translate3d(20px, 10px, 0) scale(1.05);
   }
 }
 

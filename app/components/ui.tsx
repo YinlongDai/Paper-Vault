@@ -31,8 +31,14 @@ export function TopBar() {
     <header className="topbar">
       <div className="container topbar-inner">
         <Link href="/" className="brand">
-          <span aria-hidden="true">📚</span>
-          <span>My Paper Vault</span>
+          <span className="brand-mark" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 4h9l5 5v11H5z" />
+              <path d="M14 4v5h5" />
+              <path d="M8.5 13h7M8.5 16.5h5" />
+            </svg>
+          </span>
+          <span className="gradient-text">My Paper Vault</span>
         </Link>
         <nav className="nav">
           <Link href="/" className="nav-link" aria-current={pathname === "/" ? "page" : undefined}>
@@ -92,6 +98,7 @@ export function ReadOnlyNotice({ what }: { what: string }) {
 
 /** A note the viewer may not read: the server sent filler text, shown blurred under a lock. */
 export function PrivateNote({ text, compact }: { text: string; compact?: boolean }) {
+  const viewer = useViewer();
   return (
     <div className={`private-note ${compact ? "compact" : ""}`}>
       <div className="private-note-text" aria-hidden="true">
@@ -99,13 +106,17 @@ export function PrivateNote({ text, compact }: { text: string; compact?: boolean
       </div>
       <div className="private-note-lock">
         <span aria-hidden="true">🔒</span>
-        <span>
-          Private note ·{" "}
-          <a href="/api/auth/signin" style={{ textDecoration: "underline" }}>
-            sign in
-          </a>{" "}
-          to read
-        </span>
+        {viewer?.signedIn ? (
+          <span>Private note · only the owner can read it</span>
+        ) : (
+          <span>
+            Private note ·{" "}
+            <a href="/api/auth/signin" style={{ textDecoration: "underline" }}>
+              sign in
+            </a>{" "}
+            as the owner to read
+          </span>
+        )}
       </div>
     </div>
   );

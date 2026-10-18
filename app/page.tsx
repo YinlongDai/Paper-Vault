@@ -328,10 +328,8 @@ function HomeInner() {
 
   return (
     <main className="container page">
-      <div className="row hero" style={{ alignItems: "baseline" }}>
-        <h1 className="page-title">
-          Find <span className="gradient-text">papers</span>
-        </h1>
+      <div className="row" style={{ alignItems: "baseline" }}>
+        <h1 className="page-title">Find papers</h1>
         <span className="meta">
           arXiv + OpenAlex
           {savedCount > 0 && (

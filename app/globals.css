@@ -1390,31 +1390,6 @@ button.paper-title:hover {
   }
 }
 
-.stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 10px;
-}
-
-.stat {
-  padding: 14px 16px;
-  border-radius: var(--radius);
-  background: var(--surface);
-  border: 1px solid var(--border);
-}
-
-.stat-value {
-  font-size: 26px;
-  font-weight: 750;
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
-}
-
-.stat-label {
-  font-size: 12.5px;
-  color: var(--muted);
-}
-
 .timeline {
   position: relative;
   padding-left: 26px;

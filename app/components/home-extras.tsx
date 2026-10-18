@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { type Label, type Paper, colorForLabel, formatDate, shortAuthors, yearOf } from "@/lib/papers";
 import { LabelChip } from "./ui";
 import { ReadingProgress, statusOf } from "./reading";
@@ -15,37 +15,6 @@ function pickRandom<T>(arr: T[], avoid?: T): T | undefined {
 
 function paperHref(p: Paper) {
   return `/saved?paper=${encodeURIComponent(p.arxivId)}`;
-}
-
-/** Animates a number from 0 to `value` once it scrolls into view. */
-function CountUp({ value }: { value: number }) {
-  const [shown, setShown] = useState(0);
-  const ref = useRef<HTMLSpanElement | null>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    let raf = 0;
-    const io = new IntersectionObserver(([e]) => {
-      if (!e.isIntersecting) return;
-      io.disconnect();
-      const start = performance.now();
-      const dur = 900;
-      const tick = (t: number) => {
-        const k = Math.min(1, (t - start) / dur);
-        setShown(Math.round(value * (1 - Math.pow(1 - k, 3))));
-        if (k < 1) raf = requestAnimationFrame(tick);
-      };
-      raf = requestAnimationFrame(tick);
-    });
-    io.observe(el);
-    return () => {
-      io.disconnect();
-      cancelAnimationFrame(raf);
-    };
-  }, [value]);
-
-  return <span ref={ref}>{shown.toLocaleString()}</span>;
 }
 
 function LabelTimeline({ papers, labels }: { papers: Paper[]; labels: Label[] }) {
@@ -216,31 +185,8 @@ function ContinueReading({ papers }: { papers: Paper[] }) {
 export function HomeExtras({ papers, labels }: { papers: Paper[]; labels: Label[] }) {
   if (!papers.length) return null;
 
-  const notes = papers.filter((p) => String(p.note ?? "").trim()).length;
-  const highlights = papers.reduce((n, p) => n + (p.annotationCount ?? 0), 0);
-  const summaries = papers.filter((p) => String(p.aiSummary ?? "").trim()).length;
-
-  const stats = [
-    { label: "papers saved", value: papers.length },
-    { label: "labels", value: labels.length },
-    { label: "papers with notes", value: notes },
-    { label: "highlights", value: highlights },
-    { label: "AI summaries", value: summaries },
-  ];
-
   return (
     <div style={{ marginTop: 28 }}>
-      <div className="stats">
-        {stats.map((s, i) => (
-          <div key={s.label} className="stat reveal" style={{ animationDelay: `${i * 50}ms` }}>
-            <div className="stat-value">
-              <CountUp value={s.value} />
-            </div>
-            <div className="stat-label">{s.label}</div>
-          </div>
-        ))}
-      </div>
-
       <ContinueReading papers={papers} />
       <NewThisWeek />
 

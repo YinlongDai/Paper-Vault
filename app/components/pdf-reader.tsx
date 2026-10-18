@@ -33,7 +33,11 @@ export const HIGHLIGHT_COLORS: Record<string, string> = {
 type PageSize = { w: number; h: number };
 type PendingSelection = { page: number; rects: Rect[]; quote: string; x: number; y: number };
 
-const ZOOMS = [0.6, 0.75, 0.9, 1, 1.15, 1.3, 1.5, 1.75, 2];
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 4;
+const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+// Canvas size cap so deep zoom doesn't allocate huge bitmaps (pixels per page).
+const MAX_CANVAS_PIXELS = 16_000_000;
 const MARGIN_W = 280;
 
 let pdfjsPromise: Promise<any> | null = null;
@@ -121,7 +125,7 @@ function PdfPage({
       const textDiv = textRef.current;
       if (!canvas || !textDiv) return;
 
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(MAX_CANVAS_PIXELS / (viewport.width * viewport.height)));
       canvas.width = Math.floor(viewport.width * dpr);
       canvas.height = Math.floor(viewport.height * dpr);
       canvas.style.width = `${Math.floor(viewport.width)}px`;
@@ -349,6 +353,12 @@ export function PdfReader({
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
   const [zoom, setZoom] = useState(1);
+  const zoomRef = useRef(1);
+  const hoverRef = useRef(false);
+  // In-progress gesture: previewed with a CSS transform, committed (re-rendered) when the gesture pauses.
+  const gestureRef = useRef<{ start: number; zoom: number; cx: number; cy: number; vx: number; vy: number } | null>(null);
+  const restoreRef = useRef<{ ratio: number; cx: number; cy: number; vx: number; vy: number } | null>(null);
+  const commitTimer = useRef<number | undefined>(undefined);
   const [colWidth, setColWidth] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -436,7 +446,132 @@ export function PdfReader({
   }, []);
 
   const baseW = sizes[0]?.w ?? 612;
-  const scale = colWidth ? Math.min(2.5, (colWidth / baseW) * zoom) : 1;
+  const scale = colWidth ? Math.min(5, (colWidth / baseW) * zoom) : 1;
+
+  /** Zoom by `factor` around a point given in client coordinates, keeping that point under the cursor/fingers. */
+  const zoomAt = useCallback((factor: number, clientX?: number, clientY?: number) => {
+    const root = scrollRef.current;
+    const inner = innerRef.current;
+    if (!root || !inner) return;
+    const box = root.getBoundingClientRect();
+    const vx = (clientX ?? box.left + box.width / 2) - box.left;
+    const vy = (clientY ?? box.top + box.height / 2) - box.top;
+
+    let g = gestureRef.current;
+    if (!g) {
+      g = {
+        start: zoomRef.current,
+        zoom: zoomRef.current,
+        cx: root.scrollLeft + vx - inner.offsetLeft,
+        cy: root.scrollTop + vy - inner.offsetTop,
+        vx,
+        vy,
+      };
+      gestureRef.current = g;
+    }
+    g.zoom = clampZoom(g.zoom * factor);
+    const ratio = g.zoom / g.start;
+    inner.style.transformOrigin = `${g.cx}px ${g.cy}px`;
+    inner.style.transform = ratio === 1 ? "" : `scale(${ratio})`;
+
+    window.clearTimeout(commitTimer.current);
+    commitTimer.current = window.setTimeout(() => {
+      const done = gestureRef.current;
+      gestureRef.current = null;
+      if (!done) return;
+      if (done.zoom === done.start) {
+        inner.style.transform = "";
+        return;
+      }
+      restoreRef.current = { ratio: done.zoom / done.start, cx: done.cx, cy: done.cy, vx: done.vx, vy: done.vy };
+      zoomRef.current = done.zoom;
+      setZoom(done.zoom);
+    }, 160);
+  }, []);
+
+  // After a committed zoom re-lays out the pages, drop the preview transform and restore the anchor point.
+  useLayoutEffect(() => {
+    const r = restoreRef.current;
+    const root = scrollRef.current;
+    const inner = innerRef.current;
+    if (!r || !root || !inner) return;
+    restoreRef.current = null;
+    inner.style.transform = "";
+    root.scrollLeft = r.cx * r.ratio + inner.offsetLeft - r.vx;
+    root.scrollTop = r.cy * r.ratio + inner.offsetTop - r.vy;
+  }, [zoom]);
+
+  // Pinch (trackpad / touch / Safari gestures), Ctrl/⌘ + scroll, and Ctrl/⌘ + = − 0.
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root) return;
+
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return; // trackpad pinch arrives as ctrl+wheel in Chrome/Firefox
+      e.preventDefault();
+      const dy = Math.max(-50, Math.min(50, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY));
+      zoomAt(Math.exp(-dy * 0.008), e.clientX, e.clientY);
+    };
+
+    let lastGestureScale = 1;
+    const onGestureStart = (e: any) => {
+      e.preventDefault();
+      lastGestureScale = 1;
+    };
+    const onGestureChange = (e: any) => {
+      e.preventDefault();
+      zoomAt(e.scale / lastGestureScale, e.clientX, e.clientY);
+      lastGestureScale = e.scale;
+    };
+
+    let lastDist = 0;
+    const dist = (t: TouchList) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) lastDist = dist(e.touches);
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 2 || !lastDist) return;
+      e.preventDefault();
+      const d = dist(e.touches);
+      zoomAt(d / lastDist, (e.touches[0].clientX + e.touches[1].clientX) / 2, (e.touches[0].clientY + e.touches[1].clientY) / 2);
+      lastDist = d;
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length < 2) lastDist = 0;
+    };
+
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || !hoverRef.current) return;
+      if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        zoomAt(1.2);
+      } else if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        zoomAt(1 / 1.2);
+      } else if (e.key === "0") {
+        e.preventDefault();
+        zoomAt(1 / (gestureRef.current?.zoom ?? zoomRef.current));
+      }
+    };
+
+    root.addEventListener("wheel", onWheel, { passive: false });
+    root.addEventListener("gesturestart", onGestureStart as EventListener, { passive: false } as AddEventListenerOptions);
+    root.addEventListener("gesturechange", onGestureChange as EventListener, { passive: false } as AddEventListenerOptions);
+    root.addEventListener("touchstart", onTouchStart, { passive: true });
+    root.addEventListener("touchmove", onTouchMove, { passive: false });
+    root.addEventListener("touchend", onTouchEnd);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      root.removeEventListener("wheel", onWheel);
+      root.removeEventListener("gesturestart", onGestureStart as EventListener);
+      root.removeEventListener("gesturechange", onGestureChange as EventListener);
+      root.removeEventListener("touchstart", onTouchStart);
+      root.removeEventListener("touchmove", onTouchMove);
+      root.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("keydown", onKey);
+      window.clearTimeout(commitTimer.current);
+    };
+  }, [zoomAt]);
 
   // Current page indicator.
   useEffect(() => {
@@ -587,19 +722,18 @@ export function PdfReader({
     if (el && scrollRef.current) scrollRef.current.scrollTo({ top: el.offsetTop - 12, behavior: "smooth" });
   }
 
-  const zoomIndex = ZOOMS.indexOf(zoom);
 
   return (
-    <div className="reader">
+    <div className="reader" onMouseEnter={() => (hoverRef.current = true)} onMouseLeave={() => (hoverRef.current = false)}>
       <div className="reader-toolbar">
         <div className="row" style={{ gap: 4 }}>
-          <button type="button" className="btn btn-sm btn-ghost btn-icon" disabled={zoomIndex <= 0} onClick={() => setZoom(ZOOMS[zoomIndex - 1])} aria-label="Zoom out">
+          <button type="button" className="btn btn-sm btn-ghost btn-icon" disabled={zoom <= MIN_ZOOM} onClick={() => zoomAt(1 / 1.2)} aria-label="Zoom out" title="Zoom out (⌘/Ctrl −)">
             −
           </button>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setZoom(1)} title="Fit width">
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => zoomAt(1 / zoom)} title="Fit width (⌘/Ctrl 0) · pinch or ⌘/Ctrl + scroll to zoom">
             {Math.round(zoom * 100)}%
           </button>
-          <button type="button" className="btn btn-sm btn-ghost btn-icon" disabled={zoomIndex >= ZOOMS.length - 1} onClick={() => setZoom(ZOOMS[zoomIndex + 1])} aria-label="Zoom in">
+          <button type="button" className="btn btn-sm btn-ghost btn-icon" disabled={zoom >= MAX_ZOOM} onClick={() => zoomAt(1.2)} aria-label="Zoom in" title="Zoom in (⌘/Ctrl +)">
             +
           </button>
         </div>

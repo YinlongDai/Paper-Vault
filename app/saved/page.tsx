@@ -956,11 +956,6 @@ function SavedPageInner() {
               <option value="published-asc">Oldest published</option>
               <option value="title">Title A–Z</option>
             </select>
-            {canEdit && (
-              <button type="button" className="btn" style={{ height: 38 }} onClick={() => setLabelDialog({ kind: "create" })}>
-                + New label
-              </button>
-            )}
             <button type="button" className="btn" style={{ height: 38 }} onClick={exportBibtex} disabled={filtered.length === 0} title="Download the papers shown as a .bib file">
               Export .bib
             </button>

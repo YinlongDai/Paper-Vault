@@ -995,6 +995,8 @@ button.paper-title:hover {
 
 .reader-scroll {
   position: relative;
+  touch-action: pan-x pan-y;
+  overscroll-behavior: contain;
   height: calc(100vh - 170px);
   min-height: 520px;
   overflow: auto;
@@ -1013,6 +1015,9 @@ button.paper-title:hover {
 
 .reader-inner {
   position: relative;
+  width: max-content;
+  min-width: 100%;
+  will-change: transform;
   display: flex;
   flex-direction: column;
   align-items: center;

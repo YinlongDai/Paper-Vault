@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type Label, type Paper, colorForLabel, formatDate, shortAuthors, yearOf } from "@/lib/papers";
 import { LabelChip } from "./ui";
+import { ReadingProgress, statusOf } from "./reading";
 
 function pickRandom<T>(arr: T[], avoid?: T): T | undefined {
   if (!arr.length) return undefined;
@@ -153,6 +154,63 @@ function RecentlySaved({ papers }: { papers: Paper[] }) {
   );
 }
 
+/** Papers in progress (most recently read first) and high-priority papers still to read. */
+function ContinueReading({ papers }: { papers: Paper[] }) {
+  const reading = useMemo(
+    () =>
+      papers
+        .filter((p) => statusOf(p) === "reading")
+        .sort((a, b) => (Date.parse(b.lastReadAt ?? "") || 0) - (Date.parse(a.lastReadAt ?? "") || 0))
+        .slice(0, 4),
+    [papers]
+  );
+  const upNext = useMemo(
+    () =>
+      papers
+        .filter((p) => statusOf(p) === "unread" && (p.priority ?? 0) > 0)
+        .sort((a, b) => (Date.parse(b.createdAt ?? "") || 0) - (Date.parse(a.createdAt ?? "") || 0))
+        .slice(0, 4),
+    [papers]
+  );
+  if (!reading.length && !upNext.length) return null;
+
+  return (
+    <section className="card reveal" style={{ marginTop: 20, animationDelay: "90ms" }}>
+      {reading.length > 0 && (
+        <>
+          <h2 className="section-title">Continue reading</h2>
+          <div className="continue-grid">
+            {reading.map((p) => (
+              <Link key={p.arxivId} href={`${paperHref(p)}&tab=pdf`} className="continue-item">
+                <div className="tl-title clamp-2">{p.title}</div>
+                <div className="row" style={{ marginTop: 8, gap: 8 }}>
+                  <ReadingProgress page={p.lastPage} count={p.pageCount} />
+                  {p.lastReadAt && <span className="meta" style={{ fontSize: 12 }}>· {formatDate(p.lastReadAt)}</span>}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </>
+      )}
+      {upNext.length > 0 && (
+        <>
+          <h2 className="section-title" style={{ marginTop: reading.length ? 18 : 0 }}>
+            Up next · high priority
+          </h2>
+          <div className="stack" style={{ gap: 8 }}>
+            {upNext.map((p) => (
+              <Link key={p.arxivId} href={paperHref(p)} style={{ textDecoration: "none" }}>
+                <span style={{ color: "#f97316", marginRight: 6 }}>⚑</span>
+                <span style={{ fontWeight: 600, fontSize: 13.5 }}>{p.title}</span>
+              </Link>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 /** Library-driven extras shown on the search page before a query is entered. */
 export function HomeExtras({ papers, labels }: { papers: Paper[]; labels: Label[] }) {
   if (!papers.length) return null;
@@ -181,6 +239,8 @@ export function HomeExtras({ papers, labels }: { papers: Paper[]; labels: Label[
           </div>
         ))}
       </div>
+
+      <ContinueReading papers={papers} />
 
       <div className="home-grid" style={{ marginTop: 20 }}>
         <LabelTimeline papers={papers} labels={labels} />

@@ -23,6 +23,18 @@ model SavedPaper {
   // Code / project-page links found for the paper: JSON { items: [{ kind, url, source, stars? }], removed: [url] }
   links          String?
   linksCheckedAt DateTime?
+  // Reading queue: "unread" | "reading" | "done"; priority 0 = normal, 1 = high
+  status   String @default("unread")
+  priority Int    @default(0)
+  // Where the owner left off in the reader
+  lastPage   Int?
+  pageCount  Int?
+  lastZoom   Float?
+  lastReadAt DateTime?
+  // Newest arXiv version seen by the version checker, and the one the owner acknowledged
+  latestVersion    String?
+  versionSeen      String?
+  versionCheckedAt DateTime?
 }
 
 model Label {

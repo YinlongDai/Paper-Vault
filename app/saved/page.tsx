@@ -15,10 +15,11 @@ import {
   shortAuthors,
   toBibtex,
 } from "@/lib/papers";
-import { bareArxivId, versionOf } from "@/lib/papers";
+import { type ReadStatus, STATUS_LABEL, bareArxivId, newVersionAvailable, versionOf } from "@/lib/papers";
 import { useCanEdit, useToast } from "../components/providers";
 import { PdfReader } from "../components/pdf-reader";
 import { CodeIcon, GlobeIcon, PaperLinks } from "../components/paper-links";
+import { PriorityToggle, ReadingProgress, StatusBadge, StatusPicker, nextStatus, statusOf } from "../components/reading";
 import { VersionsPanel, useVersions } from "../components/versions";
 import {
   ConfirmModal,
@@ -37,7 +38,8 @@ import {
 const ALL = "__all__";
 const UNLABELED = "__unlabeled__";
 
-type SortKey = "saved-desc" | "saved-asc" | "published-desc" | "published-asc" | "title";
+type SortKey = "saved-desc" | "saved-asc" | "published-desc" | "published-asc" | "title" | "priority";
+const STATUS_FILTER = "status:";
 type Tab = "overview" | "pdf" | "versions" | "summary";
 
 function parseMs(s?: string | null) {
@@ -102,6 +104,7 @@ function PaperDetail({
   onFilterLabel,
   onChanged,
   onRemove,
+  initialTab,
 }: {
   paper: Paper;
   labels: Label[];
@@ -113,9 +116,10 @@ function PaperDetail({
   onFilterLabel: (name: string) => void;
   onChanged: () => Promise<void>;
   onRemove: (p: Paper) => void;
+  initialTab?: Tab;
 }) {
   const toast = useToast();
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>(initialTab ?? "overview");
   const savedVersion = versionOf(paper.arxivId);
   const [readingVersion, setReadingVersion] = useState(savedVersion);
   const [annotationCounts, setAnnotationCounts] = useState<Record<string, number>>({});
@@ -214,6 +218,33 @@ function PaperDetail({
     }
   }
 
+  async function updateReading(data: { status?: ReadStatus; priority?: number; versionSeen?: string }) {
+    try {
+      await sendJson("/api/saved", "PATCH", { arxivId: paper.arxivId, ...data });
+      await onChanged();
+    } catch (e: any) {
+      toast(`Couldn't update: ${e?.message ?? e}`, { kind: "error" });
+    }
+  }
+
+  // Opening the reader moves a paper from "To read" to "Reading".
+  useEffect(() => {
+    if (tab === "pdf" && canEdit && statusOf(paper) === "unread") updateReading({ status: "reading" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, paper.arxivId, canEdit]);
+
+  // Save the reading position (debounced in the reader).
+  const saveProgress = useCallback(
+    (page: number, pageCount: number, zoom: number) => {
+      if (!canEdit) return;
+      sendJson("/api/saved", "PATCH", { arxivId: paper.arxivId, progress: { page, pageCount, zoom } }).catch(() => {});
+    },
+    [canEdit, paper.arxivId]
+  );
+
+  const newVersion = newVersionAvailable(paper);
+  const status = statusOf(paper);
+
   return (
     <div>
       <div className="row">
@@ -253,6 +284,46 @@ function PaperDetail({
           {paper.published && <span className="dot-sep">Published {formatDate(paper.published)}</span>}
           {paper.createdAt && <span className="dot-sep">Saved {formatDate(paper.createdAt)}</span>}
         </div>
+
+        <div className="row" style={{ marginTop: 12, gap: 10 }}>
+          <StatusPicker value={status} canEdit={canEdit} onChange={(s) => updateReading({ status: s })} />
+          <PriorityToggle high={(paper.priority ?? 0) > 0} canEdit={canEdit} onChange={(h) => updateReading({ priority: h ? 1 : 0 })} />
+          <ReadingProgress page={paper.lastPage} count={paper.pageCount} />
+        </div>
+
+        {newVersion && (
+          <div className="version-alert">
+            <span>
+              🆕 arXiv <b>{newVersion}</b> is out. You saved <b>{savedVersion}</b>
+              {annotationCounts[savedVersion] ? `, and your ${annotationCounts[savedVersion]} highlight(s) are on ${savedVersion}` : ""}.
+            </span>
+            <span className="spacer" />
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => {
+                setTab("versions");
+              }}
+            >
+              Compare
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={() => {
+                setReadingVersion(newVersion);
+                setTab("pdf");
+              }}
+            >
+              Read {newVersion}
+            </button>
+            {canEdit && (
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => updateReading({ versionSeen: newVersion })}>
+                Dismiss
+              </button>
+            )}
+          </div>
+        )}
 
         <div className="row" style={{ marginTop: 14 }}>
           <a className="btn btn-sm" href={paper.absUrl} target="_blank" rel="noreferrer">
@@ -438,6 +509,9 @@ function PaperDetail({
                 pdfUrl={readingPdfUrl || pdfUrl}
                 canEdit={canEdit}
                 onCountsChange={setAnnotationCounts}
+                initialPage={paper.lastPage ?? undefined}
+                initialZoom={paper.lastZoom ?? undefined}
+                onProgress={saveProgress}
               />
             </div>
           ) : (
@@ -557,6 +631,7 @@ function LibraryCard({
   onOpen,
   onFilterLabel,
   onRemove,
+  onStatus,
 }: {
   p: Paper;
   activeLabel: string;
@@ -564,9 +639,12 @@ function LibraryCard({
   onOpen: () => void;
   onFilterLabel: (name: string) => void;
   onRemove: () => void;
+  onStatus: (s: ReadStatus) => void;
 }) {
   const toast = useToast();
   const openAlex = isOpenAlex(p);
+  const status = statusOf(p);
+  const newVersion = newVersionAvailable(p);
 
   return (
     <article className="card paper-card">
@@ -577,6 +655,16 @@ function LibraryCard({
           </button>
           <div className="paper-authors" title={p.authors}>
             {shortAuthors(p.authors)}
+          </div>
+          <div className="row" style={{ gap: 6, marginTop: 6 }}>
+            <StatusBadge status={status} onCycle={canEdit ? () => onStatus(nextStatus(status)) : undefined} />
+            {(p.priority ?? 0) > 0 && <span className="priority-flag on" style={{ padding: "0 7px", fontSize: 11.5 }}>⚑</span>}
+            {newVersion && (
+              <button type="button" className="new-version-badge" style={{ border: "none", cursor: "pointer" }} title="A newer arXiv version is available" onClick={onOpen}>
+                {newVersion} available
+              </button>
+            )}
+            {status === "reading" && <ReadingProgress page={p.lastPage} count={p.pageCount} />}
           </div>
           <div className="meta row" style={{ gap: 0, marginTop: 6 }}>
             <span className={`badge ${openAlex ? "" : "badge-arxiv"}`}>{openAlex ? "OpenAlex" : "arXiv"}</span>
@@ -697,11 +785,37 @@ function SavedPageInner() {
     reload();
   }, [reload]);
 
+  // Ask arXiv about newer versions in the background (the server rate-limits this per paper).
+  useEffect(() => {
+    fetchJson<{ updated: number }>("/api/versions/check")
+      .then((j) => {
+        if (j.updated) reload();
+      })
+      .catch(() => {});
+  }, [reload]);
+
+  const statusCounts = useMemo(() => {
+    const c: Record<ReadStatus, number> = { unread: 0, reading: 0, done: 0 };
+    for (const p of items) c[statusOf(p)]++;
+    return c;
+  }, [items]);
+
+  async function setStatus(p: Paper, status: ReadStatus) {
+    setItems((cur) => cur.map((x) => (x.arxivId === p.arxivId ? { ...x, status } : x)));
+    try {
+      await sendJson("/api/saved", "PATCH", { arxivId: p.arxivId, status });
+    } catch (e: any) {
+      toast(`Couldn't update status: ${e?.message ?? e}`, { kind: "error" });
+      reload();
+    }
+  }
+
   const unlabeledCount = useMemo(() => items.filter((p) => (p.labelNames ?? []).length === 0).length, [items]);
 
   const filtered = useMemo(() => {
     let out = items;
     if (activeLabel === UNLABELED) out = out.filter((p) => (p.labelNames ?? []).length === 0);
+    else if (activeLabel.startsWith(STATUS_FILTER)) out = out.filter((p) => statusOf(p) === activeLabel.slice(STATUS_FILTER.length));
     else if (activeLabel !== ALL) out = out.filter((p) => (p.labelNames ?? []).includes(activeLabel));
 
     const terms = searchText.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -724,6 +838,10 @@ function SavedPageInner() {
           return parseMs(a.published) - parseMs(b.published) || byTitle(a, b);
         case "title":
           return byTitle(a, b);
+        case "priority": {
+          const rank = (p: Paper) => ({ reading: 0, unread: 1, done: 2 })[statusOf(p)];
+          return (b.priority ?? 0) - (a.priority ?? 0) || rank(a) - rank(b) || parseMs(b.createdAt) - parseMs(a.createdAt);
+        }
         default:
           return parseMs(b.createdAt) - parseMs(a.createdAt) || byTitle(a, b);
       }
@@ -821,7 +939,7 @@ function SavedPageInner() {
   function exportBibtex() {
     if (filtered.length === 0) return;
     const bib = filtered.map(toBibtex).join("\n\n") + "\n";
-    const suffix = activeLabel === ALL ? "library" : activeLabel === UNLABELED ? "unlabeled" : activeLabel;
+    const suffix = activeLabel === ALL ? "library" : activeLabel === UNLABELED ? "unlabeled" : activeLabel.replace(STATUS_FILTER, "");
     downloadText(`paper-vault-${suffix.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.bib`, bib);
     toast(`Exported ${filtered.length} entr${filtered.length === 1 ? "y" : "ies"}`);
   }
@@ -848,6 +966,7 @@ function SavedPageInner() {
             onFilterLabel={filterByLabel}
             onChanged={reload}
             onRemove={removePaper}
+            initialTab={(["overview", "pdf", "versions", "summary"] as const).find((t) => t === searchParams.get("tab"))}
           />
         ) : (
           <div className="empty">
@@ -862,7 +981,14 @@ function SavedPageInner() {
     );
   }
 
-  const activeTitle = activeLabel === ALL ? "All papers" : activeLabel === UNLABELED ? "Unlabeled" : activeLabel;
+  const activeTitle =
+    activeLabel === ALL
+      ? "All papers"
+      : activeLabel === UNLABELED
+        ? "Unlabeled"
+        : activeLabel.startsWith(STATUS_FILTER)
+          ? STATUS_LABEL[activeLabel.slice(STATUS_FILTER.length) as ReadStatus]
+          : activeLabel;
 
   return (
     <main className="container page">
@@ -881,6 +1007,23 @@ function SavedPageInner() {
             Unlabeled
             <span className="count">{unlabeledCount}</span>
           </button>
+
+          <div className="section-title" style={{ margin: "18px 10px 6px" }}>
+            Reading list
+          </div>
+          {(["reading", "unread", "done"] as ReadStatus[]).map((st) => (
+            <button
+              key={st}
+              type="button"
+              className="side-item"
+              aria-current={activeLabel === STATUS_FILTER + st}
+              onClick={() => setActiveLabel(STATUS_FILTER + st)}
+            >
+              <span className={`swatch status-dot-${st}`} />
+              {STATUS_LABEL[st]}
+              <span className="count">{statusCounts[st]}</span>
+            </button>
+          ))}
 
           <div className="section-title" style={{ margin: "18px 10px 6px" }}>
             Labels
@@ -976,6 +1119,7 @@ function SavedPageInner() {
               <option value="published-desc">Newest published</option>
               <option value="published-asc">Oldest published</option>
               <option value="title">Title A–Z</option>
+              <option value="priority">Priority / reading</option>
             </select>
             <button type="button" className="btn" style={{ height: 38 }} onClick={exportBibtex} disabled={filtered.length === 0} title="Download the papers shown as a .bib file">
               Export .bib
@@ -1051,6 +1195,7 @@ function SavedPageInner() {
                     onOpen={() => openPaper(p.arxivId)}
                     onFilterLabel={filterByLabel}
                     onRemove={() => removePaper(p)}
+                    onStatus={(st) => setStatus(p, st)}
                   />
                 ))}
               </div>

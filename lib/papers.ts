@@ -20,7 +20,28 @@ export type Paper = {
   /** Set by the server when the note was replaced with filler for a visitor. */
   noteHidden?: boolean;
   links?: { kind: "code" | "project"; url: string; source: string; stars?: number }[];
+  status?: ReadStatus;
+  priority?: number;
+  lastPage?: number | null;
+  pageCount?: number | null;
+  lastZoom?: number | null;
+  lastReadAt?: string | null;
+  latestVersion?: string | null;
+  versionSeen?: string | null;
 };
+
+export type ReadStatus = "unread" | "reading" | "done";
+
+export const STATUS_LABEL: Record<ReadStatus, string> = { unread: "To read", reading: "Reading", done: "Done" };
+
+/** A newer arXiv version than the one saved, which the owner hasn't dismissed yet ("" if none). */
+export function newVersionAvailable(p: Pick<Paper, "arxivId" | "latestVersion" | "versionSeen">) {
+  const saved = Number((p.arxivId.match(/v(\d+)$/i) ?? [])[1] ?? 0);
+  const latest = Number((String(p.latestVersion ?? "").match(/^v(\d+)$/) ?? [])[1] ?? 0);
+  if (!saved || !latest || latest <= saved) return "";
+  if (p.versionSeen === p.latestVersion) return "";
+  return `v${latest}`;
+}
 
 export type Label = { id: number; name: string; count: number };
 

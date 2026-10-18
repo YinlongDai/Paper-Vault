@@ -375,12 +375,20 @@ export function PdfReader({
   pdfUrl,
   canEdit,
   onCountsChange,
+  initialPage,
+  initialZoom,
+  onProgress,
 }: {
   arxivId: string;
   version: string;
   pdfUrl: string;
   canEdit: boolean;
   onCountsChange?: (byVersion: Record<string, number>) => void;
+  /** Resume position (from the last session). */
+  initialPage?: number;
+  initialZoom?: number;
+  /** Called (debounced) with the page in view, the page count and the zoom. */
+  onProgress?: (page: number, pageCount: number, zoom: number) => void;
 }) {
   const toast = useToast();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -393,8 +401,10 @@ export function PdfReader({
   const [sizes, setSizes] = useState<PageSize[]>([]);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
-  const [zoom, setZoom] = useState(1);
-  const zoomRef = useRef(1);
+  const startZoom = initialZoom && initialZoom >= MIN_ZOOM && initialZoom <= MAX_ZOOM ? initialZoom : 1;
+  const [zoom, setZoom] = useState(startZoom);
+  const zoomRef = useRef(startZoom);
+  const restoredRef = useRef(false);
   const hoverRef = useRef(false);
   // In-progress gesture: previewed with a CSS transform, committed (re-rendered) when the gesture pauses.
   const gestureRef = useRef<{ start: number; zoom: number; cx: number; cy: number; vx: number; vy: number } | null>(null);
@@ -629,6 +639,22 @@ export function PdfReader({
     pageEls.current.forEach((el) => io.observe(el));
     return () => io.disconnect();
   }, [sizes.length, scale]);
+
+  // Resume at the last page once pages are laid out.
+  useLayoutEffect(() => {
+    if (restoredRef.current || status !== "ready" || !sizes.length || !colWidth) return;
+    restoredRef.current = true;
+    const n = Math.min(sizes.length, Math.max(1, Math.floor(initialPage ?? 1)));
+    const el = pageEls.current.get(n);
+    if (n > 1 && el && scrollRef.current) scrollRef.current.scrollTop = el.offsetTop - 12;
+  }, [status, sizes.length, colWidth, initialPage]);
+
+  // Report reading position, debounced.
+  useEffect(() => {
+    if (!onProgress || status !== "ready" || !sizes.length || !restoredRef.current) return;
+    const t = window.setTimeout(() => onProgress(currentPage, sizes.length, zoom), 1500);
+    return () => window.clearTimeout(t);
+  }, [onProgress, status, currentPage, sizes.length, zoom]);
 
   const registerRef = useCallback((page: number, el: HTMLDivElement | null) => {
     if (el) pageEls.current.set(page, el);

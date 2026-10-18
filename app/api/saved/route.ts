@@ -207,6 +207,30 @@ export async function PATCH(req: Request) {
       await prisma.savedPaper.update({ where: { arxivId }, data: { note: body.note } });
     }
 
+    // Reading queue / progress / version acknowledgement
+    const data: {
+      status?: string;
+      priority?: number;
+      lastPage?: number;
+      pageCount?: number;
+      lastZoom?: number;
+      lastReadAt?: Date;
+      versionSeen?: string;
+    } = {};
+    if (["unread", "reading", "done"].includes(body?.status)) data.status = body.status;
+    if (body?.priority === 0 || body?.priority === 1) data.priority = body.priority;
+    if (body?.progress && typeof body.progress === "object") {
+      const pg = Math.floor(Number(body.progress.page));
+      const pc = Math.floor(Number(body.progress.pageCount));
+      const zm = Number(body.progress.zoom);
+      if (pg >= 1) data.lastPage = pg;
+      if (pc >= 1) data.pageCount = pc;
+      if (zm > 0 && zm <= 10) data.lastZoom = zm;
+      data.lastReadAt = new Date();
+    }
+    if (typeof body?.versionSeen === "string" && /^v\d+$/.test(body.versionSeen)) data.versionSeen = body.versionSeen;
+    if (Object.keys(data).length) await prisma.savedPaper.update({ where: { arxivId }, data });
+
     if (Array.isArray(body?.labelNames)) {
       await setPaperLabels(paper.id, cleanLabelNames(body.labelNames));
     }

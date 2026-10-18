@@ -14,6 +14,9 @@ My Paper Vault allows you to search papers from **arXiv** and **OpenAlex**, save
 - 📝 **Markdown Notes**: Write and render formatted notes for every paper.
 - 📄 **Integrated PDF Viewer**: View papers directly in your browser using a proxied viewer that bypasses CORS restrictions.
 - 🤖 **AI Summaries**: (Optional) Generate detailed paper summaries using the Gemini API, and regenerate them any time.
+- 🖍️ **Highlights & Margin Notes**: Select text in the built-in PDF reader to highlight it and attach a note that stays next to that line as you scroll.
+- 🔀 **Version Compare**: Switch between arXiv versions of a paper and compare them with a word-level diff and side-by-side PDFs.
+- ✨ **Home Dashboard**: A timeline of papers from a random label, library stats, a random “Rediscover” pick and a papers-by-year chart.
 - 📚 **Library View**: Label sidebar with counts, full-text filter across titles, authors, abstracts and notes, and flexible sorting.
 - 📤 **BibTeX Export**: Copy a single citation or export the current view as a `.bib` file.
 - ⌨️ **Keyboard Friendly**: `/` focuses search, `←`/`→` move between papers, `⌘/Ctrl+Enter` saves notes; removals can be undone.
@@ -110,7 +113,7 @@ Once the server starts, you will see a message in your terminal. Open your favor
 - **Language**: [TypeScript](https://www.typescriptlang.org/)
 - **Database**: [SQLite](https://www.sqlite.org/) via [Prisma ORM](https://www.prisma.io/)
 - **Styling**: Vanilla CSS (Modern, responsive layout)
-- **PDF Viewing**: The browser's built-in PDF viewer, served through a small `/api/pdf` proxy
+- **PDF Rendering**: [pdf.js](https://github.com/mozilla/pdf.js) (`pdfjs-dist`), served through a small `/api/pdf` proxy
 
 ---
 

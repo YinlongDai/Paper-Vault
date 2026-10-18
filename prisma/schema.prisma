@@ -19,6 +19,7 @@ model SavedPaper {
   labels    SavedPaperLabel[]
   note      String?
   aiSummary String?
+  annotations Annotation[]
 }
 
 model Label {
@@ -37,4 +38,22 @@ model SavedPaperLabel {
   label   Label      @relation(fields: [labelId], references: [id], onDelete: Cascade)
 
   @@id([paperId, labelId])
+}
+
+// A highlight on a passage of a paper's PDF, with an optional note.
+// rects are fractions of the page size: [[x, y, w, h], ...] as JSON.
+model Annotation {
+  id        Int        @id @default(autoincrement())
+  paperId   Int
+  paper     SavedPaper @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  version   String     @default("")
+  page      Int
+  rects     String
+  quote     String
+  note      String     @default("")
+  color     String     @default("yellow")
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([paperId])
 }

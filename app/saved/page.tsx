@@ -15,7 +15,10 @@ import {
   shortAuthors,
   toBibtex,
 } from "@/lib/papers";
+import { bareArxivId, versionOf } from "@/lib/papers";
 import { useCanEdit, useToast } from "../components/providers";
+import { PdfReader } from "../components/pdf-reader";
+import { VersionsPanel, useVersions } from "../components/versions";
 import {
   ConfirmModal,
   LabelChip,
@@ -33,7 +36,7 @@ const ALL = "__all__";
 const UNLABELED = "__unlabeled__";
 
 type SortKey = "saved-desc" | "saved-asc" | "published-desc" | "published-asc" | "title";
-type Tab = "overview" | "pdf" | "summary";
+type Tab = "overview" | "pdf" | "versions" | "summary";
 
 function parseMs(s?: string | null) {
   const ms = Date.parse(String(s || ""));
@@ -111,6 +114,10 @@ function PaperDetail({
 }) {
   const toast = useToast();
   const [tab, setTab] = useState<Tab>("overview");
+  const savedVersion = versionOf(paper.arxivId);
+  const [readingVersion, setReadingVersion] = useState(savedVersion);
+  const [annotationCounts, setAnnotationCounts] = useState<Record<string, number>>({});
+  const [versionsWanted, setVersionsWanted] = useState(false);
   const [noteEditing, setNoteEditing] = useState(false);
   const [noteDraft, setNoteDraft] = useState(String(paper.note ?? ""));
   const [noteSaving, setNoteSaving] = useState(false);
@@ -119,6 +126,8 @@ function PaperDetail({
   const [summarizing, setSummarizing] = useState(false);
 
   const openAlex = isOpenAlex(paper);
+  const { versions, error: versionsError } = useVersions(paper.arxivId, !openAlex && versionsWanted);
+  const readingPdfUrl = readingVersion ? `https://arxiv.org/pdf/${bareArxivId(paper.arxivId)}${readingVersion}` : "";
   const pdfUrl = openAlex ? "" : asEmbedPdfUrl(paper.pdfUrl) || asEmbedPdfUrl(paper.absUrl);
   const proxiedPdf = pdfUrl ? `/api/pdf?url=${encodeURIComponent(pdfUrl)}` : "";
   const paperLabels = paper.labelNames ?? [];
@@ -128,8 +137,31 @@ function PaperDetail({
     setNoteEditing(false);
     setNoteDraft(String(paper.note ?? ""));
     setLabelsOpen(false);
+    setReadingVersion(versionOf(paper.arxivId));
+    setVersionsWanted(false);
+    setAnnotationCounts({});
     window.scrollTo({ top: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paper.arxivId]);
+
+  useEffect(() => {
+    if (tab === "pdf" || tab === "versions") setVersionsWanted(true);
+  }, [tab]);
+
+  // Highlight counts per version (the reader keeps them current once it's open).
+  useEffect(() => {
+    let cancelled = false;
+    fetchJson<{ annotations: { version: string }[] }>(`/api/annotations?arxivId=${encodeURIComponent(paper.arxivId)}`)
+      .then((j) => {
+        if (cancelled) return;
+        const counts: Record<string, number> = {};
+        for (const a of j.annotations ?? []) counts[a.version || ""] = (counts[a.version || ""] ?? 0) + 1;
+        setAnnotationCounts(counts);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, [paper.arxivId]);
 
   // ←/→ move between papers in the current list (when not typing).
@@ -275,8 +307,13 @@ function PaperDetail({
           Overview
         </button>
         <button type="button" role="tab" className="tab" aria-selected={tab === "pdf"} onClick={() => setTab("pdf")}>
-          PDF
+          Read{Object.values(annotationCounts).reduce((n, c) => n + c, 0) ? ` · ${Object.values(annotationCounts).reduce((n, c) => n + c, 0)}` : ""}
         </button>
+        {!openAlex && (
+          <button type="button" role="tab" className="tab" aria-selected={tab === "versions"} onClick={() => setTab("versions")}>
+            Versions{versions && versions.length > 1 ? ` · ${versions.length}` : ""}
+          </button>
+        )}
         <button type="button" role="tab" className="tab" aria-selected={tab === "summary"} onClick={() => setTab("summary")}>
           AI summary{hasText(paper.aiSummary) ? " ✓" : ""}
         </button>
@@ -367,14 +404,36 @@ function PaperDetail({
         {tab === "pdf" &&
           (proxiedPdf ? (
             <div>
-              <div className="row" style={{ marginBottom: 10 }}>
-                <span className="meta">Served through the /api/pdf proxy to avoid CORS.</span>
-                <span className="spacer" />
-                <a className="btn btn-sm" href={proxiedPdf} target="_blank" rel="noreferrer">
-                  Open in new tab ↗
-                </a>
-              </div>
-              <iframe className="pdf-frame" src={proxiedPdf} title={`PDF: ${paper.title}`} />
+              {versions && versions.length > 1 && (
+                <div className="row" style={{ marginBottom: 10 }}>
+                  <span className="meta">Version</span>
+                  {versions.map((v) => (
+                    <button
+                      key={v.version}
+                      type="button"
+                      className={`chip chip-plain`}
+                      aria-pressed={(readingVersion || versions[versions.length - 1].version) === v.version}
+                      onClick={() => setReadingVersion(v.version)}
+                      title={`${v.version} · ${formatDate(v.date)}`}
+                    >
+                      {v.version}
+                      {annotationCounts[v.version] ? <span className="chip-count">✎{annotationCounts[v.version]}</span> : null}
+                    </button>
+                  ))}
+                  <span className="spacer" />
+                  <button type="button" className="btn btn-sm btn-ghost" onClick={() => setTab("versions")}>
+                    Compare versions →
+                  </button>
+                </div>
+              )}
+              <PdfReader
+                key={readingVersion}
+                arxivId={paper.arxivId}
+                version={readingVersion}
+                pdfUrl={readingPdfUrl || pdfUrl}
+                canEdit={canEdit}
+                onCountsChange={setAnnotationCounts}
+              />
             </div>
           ) : (
             <div className="empty">
@@ -388,6 +447,20 @@ function PaperDetail({
               </div>
             </div>
           ))}
+
+        {tab === "versions" && (
+          <VersionsPanel
+            versions={versions}
+            error={versionsError}
+            savedVersion={savedVersion}
+            readingVersion={readingVersion}
+            annotationCounts={annotationCounts}
+            onRead={(v) => {
+              setReadingVersion(v);
+              setTab("pdf");
+            }}
+          />
+        )}
 
         {tab === "summary" && (
           <section className="card">
@@ -511,6 +584,11 @@ function LibraryCard({
             {hasText(p.aiSummary) && (
               <span className="dot-sep" title="Has AI summary">
                 ✨ summary
+              </span>
+            )}
+            {!!p.annotationCount && (
+              <span className="dot-sep" title="Highlights in the PDF">
+                🖍 {p.annotationCount}
               </span>
             )}
           </div>

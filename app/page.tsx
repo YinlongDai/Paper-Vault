@@ -14,6 +14,7 @@ import {
 } from "@/lib/papers";
 import { useCanEdit, useToast } from "./components/providers";
 import { LabelChip, LabelPicker, Modal, ReadOnlyNotice, SearchIcon, Spinner, StarIcon } from "./components/ui";
+import { HomeExtras } from "./components/home-extras";
 
 type Field = "smart" | "title" | "author" | "abstract" | "all";
 type Sort = "relevance" | "submittedDate" | "lastUpdatedDate" | "citations";
@@ -320,14 +321,17 @@ function HomeInner() {
     }
   }
 
-  const savedCount = Object.keys(saved).length;
+  const savedList = useMemo(() => Object.values(saved), [saved]);
+  const savedCount = savedList.length;
   const labelNames = useMemo(() => labels.map((l) => l.name), [labels]);
   const hasNext = papers.length >= PAGE_SIZE;
 
   return (
     <main className="container page">
-      <div className="row" style={{ alignItems: "baseline" }}>
-        <h1 className="page-title">Find papers</h1>
+      <div className="row hero" style={{ alignItems: "baseline" }}>
+        <h1 className="page-title">
+          Find <span className="gradient-text">papers</span>
+        </h1>
         <span className="meta">
           arXiv + OpenAlex
           {savedCount > 0 && (
@@ -404,17 +408,26 @@ function HomeInner() {
 
       <section style={{ marginTop: 26 }}>
         {!urlQ ? (
-          <div className="empty">
+          <>
+          <div className="empty reveal">
             <div className="empty-title">Start with a topic</div>
             <div>Try one of these, or press <span className="kbd">/</span> to type your own.</div>
             <div className="row" style={{ justifyContent: "center", marginTop: 16 }}>
-              {SUGGESTIONS.map((s) => (
-                <button key={s} type="button" className="chip chip-plain" onClick={() => submit(s)}>
+              {SUGGESTIONS.map((s, i) => (
+                <button
+                  key={s}
+                  type="button"
+                  className="chip chip-plain reveal"
+                  style={{ animationDelay: `${150 + i * 50}ms` }}
+                  onClick={() => submit(s)}
+                >
                   {s}
                 </button>
               ))}
             </div>
           </div>
+          <HomeExtras papers={savedList} labels={labels} />
+          </>
         ) : (
           <>
             <div className="row" style={{ marginBottom: 12 }}>
@@ -451,7 +464,8 @@ function HomeInner() {
               )
             ) : (
               <div className="stack">
-                {papers.map((p) => (
+                {papers.map((p, i) => (
+                  <div key={p.arxivId} className="reveal" style={{ animationDelay: `${i * 40}ms` }}>
                   <ResultCard
                     key={p.arxivId}
                     p={p}
@@ -461,6 +475,7 @@ function HomeInner() {
                     onSave={() => openSave(p)}
                     onUnsave={() => unsave(p)}
                   />
+                  </div>
                 ))}
               </div>
             )}

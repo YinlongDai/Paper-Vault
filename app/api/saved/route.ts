@@ -56,11 +56,13 @@ export async function GET(req: Request) {
       orderBy: { createdAt: "desc" },
       include: {
         labels: { include: { label: true } },
+        _count: { select: { annotations: true } },
       },
     });
 
-    const itemsWithLabels = items.map(({ labels, ...p }) => ({
+    const itemsWithLabels = items.map(({ labels, _count, ...p }) => ({
       ...p,
+      annotationCount: _count.annotations,
       labelNames: labels.map((x) => x.label.name).sort((a, b) => a.localeCompare(b)),
     }));
 
@@ -156,6 +158,7 @@ export async function DELETE(req: Request) {
   const paper = await prisma.savedPaper.findUnique({ where: { arxivId }, select: { id: true } });
   if (paper) {
     await prisma.savedPaperLabel.deleteMany({ where: { paperId: paper.id } });
+    await prisma.annotation.deleteMany({ where: { paperId: paper.id } });
     await prisma.savedPaper.delete({ where: { id: paper.id } });
   }
   return NextResponse.json({ ok: true });

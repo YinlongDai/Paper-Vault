@@ -16,6 +16,7 @@ export type Paper = {
   note?: string | null;
   aiSummary?: string | null;
   createdAt?: string;
+  annotationCount?: number;
 };
 
 export type Label = { id: number; name: string; count: number };
@@ -196,4 +197,47 @@ export function sendJson<T = any>(url: string, method: string, body: unknown) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+export type DiffPart = { kind: "same" | "add" | "del"; text: string };
+
+/** Word-level diff (LCS). Fine for abstracts of a few hundred words. */
+export function diffWords(a: string, b: string): DiffPart[] {
+  const A = a.split(/(\s+)/).filter(Boolean);
+  const B = b.split(/(\s+)/).filter(Boolean);
+  const n = A.length;
+  const m = B.length;
+  const dp: Uint16Array[] = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = A[i] === B[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out: DiffPart[] = [];
+  const push = (kind: DiffPart["kind"], text: string) => {
+    const last = out[out.length - 1];
+    if (last && last.kind === kind) last.text += text;
+    else out.push({ kind, text });
+  };
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (A[i] === B[j]) {
+      push("same", A[i]);
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      push("del", A[i++]);
+    } else {
+      push("add", B[j++]);
+    }
+  }
+  while (i < n) push("del", A[i++]);
+  while (j < m) push("add", B[j++]);
+  return out;
+}
+
+/** "2209.05557v3" → "v3"; "" when the id has no version suffix or isn't from arXiv. */
+export function versionOf(id: string) {
+  return (String(id || "").match(/(v\d+)$/i)?.[1] ?? "").toLowerCase();
 }

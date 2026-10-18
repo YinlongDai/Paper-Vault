@@ -1868,3 +1868,128 @@ span.priority-flag {
   gap: 6px;
   margin-left: 12px;
 }
+
+/* ---------- horizontal label timeline (Library) ---------- */
+
+.htl-card {
+  margin-top: 14px;
+  padding-bottom: 10px;
+}
+
+.htl-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 0 -6px;
+  padding: 0 6px;
+}
+
+.htl {
+  position: relative;
+}
+
+.htl-axis {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  margin-top: -1px;
+  background: linear-gradient(90deg, transparent, var(--tl-color) 6%, var(--tl-color) 94%, transparent);
+  opacity: 0.55;
+  transform-origin: left;
+  animation: grow-x 0.7s ease-out both;
+}
+
+@keyframes grow-x {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+/* Year gridline across the chart, label along the bottom edge (clear of the title tags). */
+.htl-tick {
+  position: absolute;
+  width: 0;
+  border-left: 1px dashed color-mix(in srgb, var(--border-strong) 70%, transparent);
+  pointer-events: none;
+}
+
+.htl-tick span {
+  position: absolute;
+  bottom: -15px;
+  left: 0;
+  transform: translateX(-50%);
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.htl-item {
+  animation: fade-up 0.4s ease-out both;
+}
+
+.htl-stem {
+  position: absolute;
+  width: 1px;
+  background: color-mix(in srgb, var(--tl-color) 50%, transparent);
+  pointer-events: none;
+}
+
+.htl-dot {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  padding: 0;
+  border-radius: 999px;
+  border: 3px solid var(--tl-color);
+  background: var(--surface);
+  cursor: pointer;
+  z-index: 2;
+  transition: transform 0.15s;
+}
+
+.htl-label {
+  position: absolute;
+  display: grid;
+  gap: 1px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  z-index: 1;
+  transition: border-color 0.15s, background 0.15s, opacity 0.15s, transform 0.15s;
+}
+
+.htl-title {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.htl-date {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.htl-item.active .htl-label {
+  border-color: var(--tl-color);
+  background: color-mix(in srgb, var(--tl-color) 14%, var(--surface));
+  transform: translateY(-1px);
+  z-index: 3;
+}
+
+.htl-item.active .htl-dot {
+  transform: scale(1.35);
+  background: var(--tl-color);
+}
+
+.htl-item.dim .htl-label,
+.htl-item.dim .htl-dot {
+  opacity: 0.45;
+}

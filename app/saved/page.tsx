@@ -21,6 +21,7 @@ import { PdfReader } from "../components/pdf-reader";
 import { CodeIcon, GlobeIcon, PaperLinks } from "../components/paper-links";
 import { RelatedPapers } from "../components/related";
 import { AddPaperModal } from "../components/quick-add";
+import { HorizontalTimeline } from "../components/label-timeline";
 import { AskPaper, type ChatMsg } from "../components/ask-paper";
 import { PriorityToggle, ReadingProgress, StatusBadge, StatusPicker, nextStatus, statusOf } from "../components/reading";
 import { VersionsPanel, useVersions } from "../components/versions";
@@ -827,11 +828,17 @@ function SavedPageInner() {
   const [loadError, setLoadError] = useState("");
   const [activeLabel, setActiveLabel] = useState<string>(ALL);
   const [searchText, setSearchText] = useState("");
+  // Paper hovered on the label timeline: the list then shows just that paper.
+  const [timelineHover, setTimelineHover] = useState<string | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("saved-desc");
   const [addOpen, setAddOpen] = useState(false);
   const [labelDialog, setLabelDialog] = useState<
     { kind: "create" } | { kind: "rename"; name: string } | { kind: "delete"; name: string } | null
   >(null);
+
+  useEffect(() => {
+    setTimelineHover(null);
+  }, [activeLabel]);
 
   const reload = useCallback(async () => {
     try {
@@ -1063,6 +1070,9 @@ function SavedPageInner() {
     );
   }
 
+  const isLabelView = activeLabel !== ALL && activeLabel !== UNLABELED && !activeLabel.startsWith(STATUS_FILTER);
+  const shownList = isLabelView && timelineHover ? filtered.filter((p) => p.arxivId === timelineHover) : filtered;
+
   const markdownExportUrl =
     "/api/export?format=md" +
     (activeLabel.startsWith(STATUS_FILTER)
@@ -1267,6 +1277,16 @@ function SavedPageInner() {
             </div>
           )}
 
+          {isLabelView && filtered.length > 0 && (
+            <HorizontalTimeline
+              papers={filtered}
+              label={activeLabel}
+              activeId={timelineHover}
+              onHover={setTimelineHover}
+              onOpen={openPaper}
+            />
+          )}
+
           <div style={{ marginTop: 16 }}>
             {loadError ? (
               <div className="notice">Couldn&apos;t load your library: {loadError}</div>
@@ -1305,7 +1325,7 @@ function SavedPageInner() {
               </div>
             ) : (
               <div className="stack">
-                {filtered.map((p) => (
+                {shownList.map((p) => (
                   <LibraryCard
                     key={p.arxivId}
                     p={p}

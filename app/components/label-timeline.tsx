@@ -5,7 +5,8 @@ import { type Paper, colorForLabel, formatDate } from "@/lib/papers";
 
 const LABEL_W = 156; // width of a title tag on the timeline
 const LANE_H = 46;
-const LANES = 2; // per side (above / below the axis)
+const MAX_ROWS = 3; // rows of title tags per side (above / below the axis) before stretching sideways
+const MAX_WIDTH = 6000; // stop stretching here and add rows instead
 const MIN_GAP = 8;
 
 type Placed = { p: Paper; t: number; x: number; lane: number; side: -1 | 1; left: number };
@@ -33,6 +34,8 @@ export function HorizontalTimeline({
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
+    // Measure once right away (ResizeObserver callbacks don't run while a tab isn't being painted).
+    setViewW(el.clientWidth);
     const ro = new ResizeObserver(() => setViewW(el.clientWidth));
     ro.observe(el);
     return () => ro.disconnect();
@@ -50,28 +53,47 @@ export function HorizontalTimeline({
   const layout = useMemo(() => {
     if (!dated.length || !viewW) return null;
     const pad = LABEL_W / 2 + 12;
-    // Widen (and scroll) when there are too many papers to fit in the lanes.
-    const width = Math.max(viewW, dated.length * ((LABEL_W + MIN_GAP) / (LANES * 2)) + pad * 2);
     const t0 = dated[0].t;
     const t1 = dated[dated.length - 1].t;
     const span = Math.max(t1 - t0, 1);
-    const xOf = (t: number) => (t1 === t0 ? width / 2 : pad + ((t - t0) / span) * (width - pad * 2));
 
-    // Greedy lane assignment, alternating above / below the axis: up0, down0, up1, down1.
-    const order: [number, -1 | 1][] = [];
-    for (let l = 0; l < LANES; l++) order.push([l, -1], [l, 1]);
-    const laneEnd = new Map<string, number>();
-    const placed: Placed[] = dated.map(({ p, t }) => {
-      const x = xOf(t);
-      const left = Math.min(Math.max(x - LABEL_W / 2, 0), width - LABEL_W);
-      let choice = order.find(([l, s]) => (laneEnd.get(`${l}${s}`) ?? -Infinity) + MIN_GAP <= left);
-      if (!choice) {
-        // Everything is busy: use the lane that frees up first.
-        choice = [...order].sort((a, b) => (laneEnd.get(`${a[0]}${a[1]}`) ?? 0) - (laneEnd.get(`${b[0]}${b[1]}`) ?? 0))[0];
+    /**
+     * Greedy row assignment at a given width, alternating above / below the axis (up0, down0, up1, ...).
+     * Returns null if more than `maxRows` rows per side would be needed. Tags never overlap.
+     */
+    const assign = (width: number, maxRows: number): Placed[] | null => {
+      const xOf = (t: number) => (t1 === t0 ? width / 2 : pad + ((t - t0) / span) * (width - pad * 2));
+      const rowEnd: number[][] = [[], []]; // [above, below] → right edge of the last tag in each row
+      const out: Placed[] = [];
+      for (const { p, t } of dated) {
+        const x = xOf(t);
+        const left = Math.min(Math.max(x - LABEL_W / 2, 0), width - LABEL_W);
+        let found: { lane: number; side: -1 | 1 } | null = null;
+        for (let lane = 0; lane < maxRows && !found; lane++) {
+          for (const side of [-1, 1] as const) {
+            const ends = rowEnd[side < 0 ? 0 : 1];
+            if ((ends[lane] ?? -Infinity) + MIN_GAP <= left) {
+              found = { lane, side };
+              break;
+            }
+          }
+        }
+        if (!found) return null;
+        rowEnd[found.side < 0 ? 0 : 1][found.lane] = left + LABEL_W;
+        out.push({ p, t, x, lane: found.lane, side: found.side, left });
       }
-      laneEnd.set(`${choice[0]}${choice[1]}`, left + LABEL_W);
-      return { p, t, x, lane: choice[0], side: choice[1], left };
-    });
+      return out;
+    };
+
+    // 1) Up to MAX_ROWS rows per side at the visible width; 2) otherwise stretch the timeline (it scrolls
+    // sideways) so papers bunched in time spread out; 3) as a last resort (e.g. same-day papers) add rows.
+    let width = Math.max(viewW, 2 * pad + LABEL_W);
+    let placed = assign(width, MAX_ROWS);
+    for (let i = 0; !placed && i < 8 && width < MAX_WIDTH; i++) {
+      width = Math.min(MAX_WIDTH, Math.round(width * 1.4));
+      placed = assign(width, MAX_ROWS);
+    }
+    if (!placed) placed = assign(width, Infinity)!;
 
     // Only reserve the rows that are actually used on each side of the axis.
     const up = Math.max(0, ...placed.filter((x) => x.side < 0).map((x) => x.lane + 1));

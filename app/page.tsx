@@ -17,6 +17,7 @@ import {
 import { useCanEdit, useToast } from "./components/providers";
 import { LabelChip, LabelPicker, Modal, ReadOnlyNotice, SearchIcon, Spinner, StarIcon } from "./components/ui";
 import { HomeExtras } from "./components/home-extras";
+import { looksResolvable, resolveInput } from "./components/quick-add";
 
 type Field = "smart" | "title" | "author" | "abstract" | "all";
 type Sort = "relevance" | "submittedDate" | "lastUpdatedDate" | "citations";
@@ -161,6 +162,7 @@ function HomeInner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [searched, setSearched] = useState(false);
+  const [direct, setDirect] = useState<Paper | null>(null);
 
   const [saved, setSaved] = useState<Record<string, Paper>>({});
   const [labels, setLabels] = useState<Label[]>([]);
@@ -214,6 +216,19 @@ function HomeInner() {
   useEffect(() => {
     loadSaved();
   }, [loadSaved]);
+
+  // A pasted arXiv id/link or DOI also resolves to that exact paper, shown above the results.
+  useEffect(() => {
+    setDirect(null);
+    if (!urlQ || !looksResolvable(urlQ)) return;
+    let cancelled = false;
+    resolveInput(urlQ)
+      .then((p) => !cancelled && setDirect({ ...p, source: p.source }))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [urlQ]);
 
   // Run the search whenever the committed (URL) state changes.
   useEffect(() => {
@@ -447,6 +462,20 @@ function HomeInner() {
             {error && (
               <div className="notice" style={{ marginBottom: 12 }}>
                 Search failed: {error}
+              </div>
+            )}
+
+            {direct && (
+              <div style={{ marginBottom: 18 }}>
+                <div className="section-title">Exact match</div>
+                <ResultCard
+                  p={direct}
+                  saved={!!saved[direct.arxivId]}
+                  labelNames={saved[direct.arxivId]?.labelNames ?? []}
+                  canEdit={canEdit}
+                  onSave={() => openSave(direct)}
+                  onUnsave={() => unsave(direct)}
+                />
               </div>
             )}
 

@@ -20,6 +20,7 @@ import { useCanEdit, useToast } from "../components/providers";
 import { PdfReader } from "../components/pdf-reader";
 import { CodeIcon, GlobeIcon, PaperLinks } from "../components/paper-links";
 import { RelatedPapers } from "../components/related";
+import { AddPaperModal } from "../components/quick-add";
 import { PriorityToggle, ReadingProgress, StatusBadge, StatusPicker, nextStatus, statusOf } from "../components/reading";
 import { VersionsPanel, useVersions } from "../components/versions";
 import {
@@ -776,6 +777,7 @@ function SavedPageInner() {
   const [activeLabel, setActiveLabel] = useState<string>(ALL);
   const [searchText, setSearchText] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("saved-desc");
+  const [addOpen, setAddOpen] = useState(false);
   const [labelDialog, setLabelDialog] = useState<
     { kind: "create" } | { kind: "rename"; name: string } | { kind: "delete"; name: string } | null
   >(null);
@@ -1158,6 +1160,11 @@ function SavedPageInner() {
               <option value="title">Title A–Z</option>
               <option value="priority">Priority / reading</option>
             </select>
+            {canEdit && (
+              <button type="button" className="btn btn-primary" style={{ height: 38 }} onClick={() => setAddOpen(true)}>
+                + Add paper
+              </button>
+            )}
             <Menu label="Export" trigger={<>Export ▾</>}>
               {(close) => (
                 <>
@@ -1265,6 +1272,14 @@ function SavedPageInner() {
         </section>
       </div>
 
+      {addOpen && (
+        <AddPaperModal
+          labels={labels.map((l) => l.name)}
+          savedIds={items.map((p) => p.arxivId)}
+          onClose={() => setAddOpen(false)}
+          onChanged={reload}
+        />
+      )}
       {labelDialog?.kind === "create" && (
         <PromptModal
           title="New label"

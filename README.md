@@ -123,3 +123,15 @@ Once the server starts, you will see a message in your terminal. Open your favor
 - **No Auth**: This version of Paper Vault has no login system. Anyone with access to your local machine can view the data.
 - **Local Database**: All your saved papers and notes are stored in `prisma/dev.db`. **Back up this file** if you want to keep your data safe!
 - **No Cloud Tracking**: Your search queries go directly to arXiv/OpenAlex APIs. Summaries go to Google Gemini API (if enabled). No other data is sent to external servers.
+
+---
+
+## 💾 Backups
+
+Everything lives in `dev.db` in the project folder — copying that file is a complete backup (stop the app first, or copy `dev.db-wal` too). You can also use Library → Export → *Full backup (.json)* to download every paper, label, note, highlight and link as one JSON file.
+
+## 🔑 Optional API keys
+
+- `OPENALEX_API_KEY` — free at https://openalex.org/settings/api; keeps OpenAlex search, related papers and open-access PDF lookups reliable.
+- `GEMINI_API_KEY` — enables AI summaries and “Ask the paper”.
+

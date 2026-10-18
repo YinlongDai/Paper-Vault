@@ -694,27 +694,45 @@ function LibraryCard({
   const openAlex = isOpenAlex(p);
   const status = statusOf(p);
   const newVersion = newVersionAvailable(p);
+  const lastSpace = p.title.trimEnd().lastIndexOf(" ");
+  const titleHead = lastSpace > 0 ? p.title.slice(0, lastSpace + 1) : "";
+  const titleLast = lastSpace > 0 ? p.title.trimEnd().slice(lastSpace + 1) : p.title;
+  const paperHref = `/saved?paper=${encodeURIComponent(p.arxivId)}`;
+  const openFromLink = (e: React.MouseEvent) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return; // allow open-in-new-tab
+    e.preventDefault();
+    onOpen();
+  };
 
   return (
     <article className="card paper-card">
       <div className="row" style={{ alignItems: "flex-start", flexWrap: "nowrap", gap: 12 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div className="card-title-line">
-            <button type="button" className="paper-title" onClick={onOpen}>
-              {p.title}
-            </button>
-            <span className="title-badges">
-              <StatusBadge status={status} onCycle={canEdit ? () => onStatus(nextStatus(status)) : undefined} />
-              {(p.priority ?? 0) > 0 && (
-                <span className="priority-flag on" style={{ padding: "0 7px", fontSize: 11.5 }} title="High priority">
-                  ⚑
-                </span>
-              )}
-              {newVersion && (
-                <button type="button" className="new-version-badge" style={{ border: "none", cursor: "pointer" }} title="A newer arXiv version is available" onClick={onOpen}>
-                  {newVersion} available
-                </button>
-              )}
+            {/* Links (not a button) so a wrapped title flows inline. The last word and the badges sit in one
+                no-wrap group, so the pill always follows the title and never ends up alone on a new line. */}
+            {titleHead && (
+              <Link className="paper-title" href={paperHref} onClick={openFromLink}>
+                {titleHead}
+              </Link>
+            )}
+            <span className="title-tail">
+              <Link className="paper-title" href={paperHref} onClick={openFromLink}>
+                {titleLast}
+              </Link>
+              <span className="title-badges">
+                <StatusBadge status={status} onCycle={canEdit ? () => onStatus(nextStatus(status)) : undefined} />
+                {(p.priority ?? 0) > 0 && (
+                  <span className="priority-flag on" style={{ padding: "0 7px", fontSize: 11.5 }} title="High priority">
+                    ⚑
+                  </span>
+                )}
+                {newVersion && (
+                  <button type="button" className="new-version-badge" style={{ border: "none", cursor: "pointer" }} title="A newer arXiv version is available" onClick={onOpen}>
+                    {newVersion} available
+                  </button>
+                )}
+              </span>
             </span>
           </div>
           <div className="paper-authors" title={p.authors}>

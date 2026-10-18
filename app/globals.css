@@ -1867,3 +1867,7 @@ span.priority-flag {
   gap: 6px;
   margin-left: 12px;
 }
+
+.title-tail {
+  white-space: nowrap;
+}

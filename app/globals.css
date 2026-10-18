@@ -1858,3 +1858,12 @@ span.priority-flag {
   vertical-align: 2px;
   white-space: nowrap;
 }
+
+/* Paper page: label chips continue the badge / date line and wrap with it. */
+.meta-labels {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+}

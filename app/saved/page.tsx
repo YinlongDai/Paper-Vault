@@ -294,6 +294,28 @@ function PaperDetail({
           <span className={`badge ${openAlex ? "" : "badge-arxiv"}`}>{openAlex ? "OpenAlex" : `arXiv ${paper.arxivId}`}</span>
           {paper.published && <span className="dot-sep">Published {formatDate(paper.published)}</span>}
           {paper.createdAt && <span className="dot-sep">Saved {formatDate(paper.createdAt)}</span>}
+          <span className="meta-labels">
+            {paperLabels.map((n) => (
+              <LabelChip
+                key={n}
+                name={n}
+                onClick={() => onFilterLabel(n)}
+                onRemove={canEdit ? () => saveLabels(paperLabels.filter((x) => x !== n)) : undefined}
+              />
+            ))}
+            {canEdit && (
+              <button
+                type="button"
+                className="chip chip-plain"
+                onClick={() => {
+                  setLabelDraft(paperLabels);
+                  setLabelsOpen(true);
+                }}
+              >
+                + Add label
+              </button>
+            )}
+          </span>
         </div>
 
         <div className="row" style={{ marginTop: 12, gap: 10 }}>
@@ -367,29 +389,6 @@ function PaperDetail({
           )}
         </div>
 
-        <div className="row" style={{ marginTop: 14, gap: 6 }}>
-          {paperLabels.map((n) => (
-            <LabelChip
-              key={n}
-              name={n}
-              onClick={() => onFilterLabel(n)}
-              onRemove={canEdit ? () => saveLabels(paperLabels.filter((x) => x !== n)) : undefined}
-            />
-          ))}
-          {canEdit && (
-            <button
-              type="button"
-              className="chip chip-plain"
-              onClick={() => {
-                setLabelDraft(paperLabels);
-                setLabelsOpen(true);
-              }}
-            >
-              + Add label
-            </button>
-          )}
-          {!canEdit && paperLabels.length === 0 && <span className="meta">No labels</span>}
-        </div>
       </div>
 
       <div className="tabs" role="tablist">

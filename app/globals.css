@@ -1816,3 +1816,30 @@ span.priority-flag {
 .feed-item:hover .tl-title {
   color: var(--accent);
 }
+
+.chat {
+  display: grid;
+  gap: 10px;
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.chat-msg {
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.55;
+  max-width: 92%;
+}
+
+.chat-msg.user {
+  justify-self: end;
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+.chat-msg.model {
+  justify-self: start;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}

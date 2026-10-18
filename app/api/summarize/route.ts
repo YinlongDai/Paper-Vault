@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { denyUnlessEditor } from "@/lib/access";
+import { friendlyGeminiError, generate, pdfPart } from "@/lib/gemini";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,106 +21,8 @@ function defaultPrompt(title: string) {
   );
 }
 
-async function listGeminiModels(key: string): Promise<any[]> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`;
-  const r = await fetch(url, { cache: "no-store" as any });
-  if (!r.ok) {
-    const raw = await r.text().catch(() => "");
-    throw new Error(`ListModels failed ${r.status}: ${raw}`);
-  }
-  const j: any = await r.json();
-  return Array.isArray(j?.models) ? j.models : [];
-}
-
-function pickModelName(models: any[]): string {
-  // Keep only models that support generateContent
-  const supported = models.filter((m) => Array.isArray(m?.supportedGenerationMethods) && m.supportedGenerationMethods.includes("generateContent"));
-  const names = supported.map((m) => String(m?.name ?? "").trim()).filter(Boolean);
-
-  // Prefer Flash-style models for speed/cost
-  const prefer = names.find((n) => /flash/i.test(n));
-  if (prefer) return prefer;
-
-  // Fallback: any model
-  return names[0] || "";
-}
-
 async function summarizePdfWithGemini(pdfUrl: string, prompt: string) {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) throw new Error("Missing GEMINI_API_KEY");
-
-  // fetch PDF bytes
-  const pdfRes = await fetch(pdfUrl, {
-    cache: "no-store" as any,
-    redirect: "follow",
-    headers: {
-      "User-Agent": "paper-vault/0.1 (self-hosted)",
-      Accept: "application/pdf,*/*;q=0.8",
-    },
-  });
-  if (!pdfRes.ok) throw new Error(`Failed to fetch PDF: ${pdfRes.status}`);
-
-  const len = Number(pdfRes.headers.get("content-length") || "0");
-  const MAX_BYTES = 18 * 1024 * 1024; // 18MB
-  if (len && len > MAX_BYTES) {
-    throw new Error(
-      `PDF too large (${Math.round(len / (1024 * 1024))}MB). Try a smaller PDF or use Gemini Files API.`
-    );
-  }
-
-  const ab = await pdfRes.arrayBuffer();
-  const b64 = Buffer.from(ab).toString("base64");
-
-  // Gemini API supports passing PDFs inline as application/pdf
-  // Allow overriding the model via env, otherwise auto-pick from ListModels.
-  const envModel = String(process.env.GEMINI_MODEL ?? "").trim();
-  let modelName = envModel;
-
-  if (!modelName) {
-    const models = await listGeminiModels(key);
-    modelName = pickModelName(models);
-  }
-
-  if (!modelName) {
-    throw new Error("No Gemini model available for generateContent. Check ListModels output / API key restrictions.");
-  }
-
-  // `modelName` may already include the `models/` prefix (as returned by ListModels).
-  const modelPath = modelName.startsWith("models/") ? modelName : `models/${modelName}`;
-  const url = `https://generativelanguage.googleapis.com/v1beta/${modelPath}:generateContent?key=${encodeURIComponent(key)}`;
-
-  const body = {
-    contents: [
-      {
-        role: "user",
-        parts: [
-          { text: prompt },
-          { inlineData: { mimeType: "application/pdf", data: b64 } },
-        ],
-      },
-    ],
-  };
-
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    cache: "no-store" as any,
-  });
-
-  const raw = await r.text();
-  if (!r.ok) {
-    const msg = raw.length > 2000 ? raw.slice(0, 2000) + "..." : raw;
-    throw new Error(`Gemini error ${r.status}: ${msg}`);
-  }
-
-  const j: any = JSON.parse(raw);
-  const out =
-    j?.candidates?.[0]?.content?.parts
-      ?.map((p: any) => String(p?.text ?? ""))
-      .join("") ?? "";
-
-  return String(out).trim();
+  return generate([{ role: "user", parts: [{ text: prompt }, await pdfPart(pdfUrl)] }]);
 }
 
 export async function POST(req: Request) {
@@ -167,19 +70,8 @@ export async function POST(req: Request) {
     const raw = String(e?.message ?? e);
     console.error("[api/summarize] error:", raw);
     return NextResponse.json(
-      { error: "Failed to summarize", detail: friendlyError(raw) },
+      { error: "Failed to summarize", detail: friendlyGeminiError(raw) },
       { status: /Missing GEMINI_API_KEY|API_KEY_INVALID/.test(raw) ? 503 : 500 }
     );
   }
-}
-
-/** Turn upstream errors into a one-line message the UI can show. */
-function friendlyError(raw: string) {
-  if (/Missing GEMINI_API_KEY/.test(raw)) return "AI summaries are not set up: add GEMINI_API_KEY to your env file.";
-  if (/API_KEY_INVALID|API key not valid/i.test(raw)) return "Gemini rejected the API key: check GEMINI_API_KEY.";
-  if (/PDF too large/.test(raw)) return raw;
-  if (/Failed to fetch PDF/.test(raw)) return raw;
-  if (/Gemini error 429|RESOURCE_EXHAUSTED/.test(raw)) return "Gemini rate limit or quota reached: try again later.";
-  const firstLine = raw.split("\n")[0];
-  return firstLine.length > 200 ? firstLine.slice(0, 200) + "…" : firstLine;
 }

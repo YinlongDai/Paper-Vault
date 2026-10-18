@@ -382,6 +382,7 @@ export function PdfReader({
   initialPage,
   initialZoom,
   onProgress,
+  onAsk,
 }: {
   arxivId: string;
   version: string;
@@ -393,6 +394,8 @@ export function PdfReader({
   initialZoom?: number;
   /** Called (debounced) with the page in view, the page count and the zoom. */
   onProgress?: (page: number, pageCount: number, zoom: number) => void;
+  /** "Ask about this" from a selection. */
+  onAsk?: (quote: string) => void;
 }) {
   const toast = useToast();
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -1016,6 +1019,21 @@ export function PdfReader({
             <button type="button" className="btn btn-sm btn-primary" onClick={() => createHighlight(true)}>
               Highlight + note
             </button>
+            {onAsk && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                title="Ask the AI about this passage"
+                onClick={() => {
+                  const q = pending.quote;
+                  setPending(null);
+                  window.getSelection()?.removeAllRanges();
+                  onAsk(q);
+                }}
+              >
+                ✨ Ask
+              </button>
+            )}
           </div>
         )}
       </div>

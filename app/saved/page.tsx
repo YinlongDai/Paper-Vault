@@ -21,6 +21,7 @@ import { PdfReader } from "../components/pdf-reader";
 import { CodeIcon, GlobeIcon, PaperLinks } from "../components/paper-links";
 import { RelatedPapers } from "../components/related";
 import { AddPaperModal } from "../components/quick-add";
+import { AskPaper, type ChatMsg } from "../components/ask-paper";
 import { PriorityToggle, ReadingProgress, StatusBadge, StatusPicker, nextStatus, statusOf } from "../components/reading";
 import { VersionsPanel, useVersions } from "../components/versions";
 import {
@@ -42,7 +43,7 @@ const UNLABELED = "__unlabeled__";
 
 type SortKey = "saved-desc" | "saved-asc" | "published-desc" | "published-asc" | "title" | "priority";
 const STATUS_FILTER = "status:";
-type Tab = "overview" | "pdf" | "versions" | "related" | "summary";
+type Tab = "overview" | "pdf" | "versions" | "related" | "ask" | "summary";
 
 function parseMs(s?: string | null) {
   const ms = Date.parse(String(s || ""));
@@ -134,6 +135,8 @@ function PaperDetail({
   const [labelsOpen, setLabelsOpen] = useState(false);
   const [labelDraft, setLabelDraft] = useState<string[]>([]);
   const [summarizing, setSummarizing] = useState(false);
+  const [chat, setChat] = useState<ChatMsg[]>([]);
+  const [askQuote, setAskQuote] = useState("");
 
   const openAlex = isOpenAlex(paper);
   const { versions, error: versionsError } = useVersions(paper.arxivId, !openAlex && versionsWanted);
@@ -151,6 +154,8 @@ function PaperDetail({
     setLabelsOpen(false);
     setReadingVersion(versionOf(paper.arxivId));
     setVersionsWanted(false);
+    setChat([]);
+    setAskQuote("");
     setAnnotationCounts({});
     window.scrollTo({ top: 0 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -402,6 +407,9 @@ function PaperDetail({
         <button type="button" role="tab" className="tab" aria-selected={tab === "related"} onClick={() => setTab("related")}>
           Related
         </button>
+        <button type="button" role="tab" className="tab" aria-selected={tab === "ask"} onClick={() => setTab("ask")}>
+          Ask{chat.length ? ` · ${Math.ceil(chat.length / 2)}` : ""}
+        </button>
         <button type="button" role="tab" className="tab" aria-selected={tab === "summary"} onClick={() => setTab("summary")}>
           AI summary{hasText(paper.aiSummary) ? " ✓" : ""}
         </button>
@@ -526,6 +534,10 @@ function PaperDetail({
                 initialPage={paper.lastPage ?? undefined}
                 initialZoom={paper.lastZoom ?? undefined}
                 onProgress={saveProgress}
+                onAsk={(quote) => {
+                  setAskQuote(quote);
+                  setTab("ask");
+                }}
               />
             </div>
           ) : (
@@ -556,6 +568,28 @@ function PaperDetail({
         )}
 
         {tab === "related" && <RelatedPapers arxivId={paper.arxivId} canEdit={canEdit} savedIds={savedIds} onSaved={onChanged} />}
+
+        {tab === "ask" && (
+          <AskPaper
+            arxivId={paper.arxivId}
+            canEdit={canEdit}
+            hasPdf={hasPdf}
+            messages={chat}
+            setMessages={(fn) => setChat(fn)}
+            seedQuote={askQuote}
+            clearSeed={() => setAskQuote("")}
+            onAddToNotes={async (md) => {
+              const next = (String(paper.note ?? "").trim() ? String(paper.note).trimEnd() + "\n\n" : "") + md;
+              try {
+                await sendJson("/api/saved", "PATCH", { arxivId: paper.arxivId, note: next });
+                await onChanged();
+                toast("Added to your notes");
+              } catch (e: any) {
+                toast(`Couldn't update notes: ${e?.message ?? e}`, { kind: "error" });
+              }
+            }}
+          />
+        )}
 
         {tab === "summary" && (
           <section className="card">
@@ -996,7 +1030,7 @@ function SavedPageInner() {
             onFilterLabel={filterByLabel}
             onChanged={reload}
             onRemove={removePaper}
-            initialTab={(["overview", "pdf", "versions", "related", "summary"] as const).find((t) => t === searchParams.get("tab"))}
+            initialTab={(["overview", "pdf", "versions", "related", "ask", "summary"] as const).find((t) => t === searchParams.get("tab"))}
             savedIds={savedIds}
           />
         ) : (

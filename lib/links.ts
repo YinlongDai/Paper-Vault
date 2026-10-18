@@ -75,6 +75,14 @@ async function firstPageUrls(pdfUrl: string): Promise<string[]> {
   const res = await fetch(pdfUrl, { headers: UA, redirect: "follow", cache: "no-store" });
   if (!res.ok) throw new Error(`PDF ${res.status}`);
   const data = new Uint8Array(await res.arrayBuffer());
+  // pdf.js references DOMMatrix at module load. Serverless runtimes lack it (and the optional @napi-rs/canvas
+  // polyfill); we never render, so a no-op stand-in is enough to read annotations and text.
+  const g = globalThis as any;
+  if (typeof g.DOMMatrix === "undefined") {
+    g.DOMMatrix = class DOMMatrix {
+      a = 1; b = 0; c = 0; d = 1; e = 0; f = 0;
+    };
+  }
   const pdfjs: any = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const doc = await pdfjs.getDocument({ data, isEvalSupported: false, disableFontFace: true, useSystemFonts: false }).promise;
   try {

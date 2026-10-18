@@ -17,6 +17,20 @@ async function ensureDefaultLabels() {
   }
 }
 
+/** Reading state and links carried over when "Undo remove" re-creates a paper. */
+function restoreFields(p: any) {
+  const out: Record<string, unknown> = {};
+  if (["unread", "reading", "done"].includes(p?.status)) out.status = p.status;
+  if (p?.priority === 0 || p?.priority === 1) out.priority = p.priority;
+  for (const k of ["lastPage", "pageCount"]) if (Number.isInteger(p?.[k]) && p[k] > 0) out[k] = p[k];
+  if (typeof p?.lastZoom === "number" && p.lastZoom > 0) out.lastZoom = p.lastZoom;
+  for (const k of ["lastReadAt", "versionCheckedAt", "linksCheckedAt"])
+    if (p?.[k] && Number.isFinite(Date.parse(p[k]))) out[k] = new Date(p[k]);
+  for (const k of ["latestVersion", "versionSeen"]) if (typeof p?.[k] === "string" && /^v\d+$/.test(p[k])) out[k] = p[k];
+  if (Array.isArray(p?.links)) out.links = JSON.stringify({ items: p.links, removed: [] });
+  return out;
+}
+
 function cleanLabelNames(raw: unknown): string[] {
   const arr = Array.isArray(raw) ? raw : [];
   return Array.from(new Set(arr.map((x) => String(x ?? "").trim()).filter(Boolean)));
@@ -131,6 +145,7 @@ export async function POST(req: Request) {
       note: typeof p.note === "string" ? p.note : "",
       aiSummary: typeof p.aiSummary === "string" ? p.aiSummary : "",
       ...(p.createdAt && Number.isFinite(Date.parse(p.createdAt)) ? { createdAt: new Date(p.createdAt) } : {}),
+      ...restoreFields(p),
     },
   });
 

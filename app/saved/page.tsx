@@ -15,7 +15,7 @@ import {
   shortAuthors,
   toBibtex,
 } from "@/lib/papers";
-import { type ReadStatus, STATUS_LABEL, bareArxivId, newVersionAvailable, titleKey, versionOf } from "@/lib/papers";
+import { type ReadStatus, STATUS_LABEL, bareArxivId, newVersionAvailable, restoreAnnotations, snapshotAnnotations, titleKey, versionOf } from "@/lib/papers";
 import { useCanEdit, useToast } from "../components/providers";
 import { PdfReader } from "../components/pdf-reader";
 import { CodeIcon, GlobeIcon, PaperLinks } from "../components/paper-links";
@@ -902,6 +902,7 @@ function SavedPageInner() {
 
   async function removePaper(p: Paper) {
     try {
+      const highlights = p.annotationCount ? await snapshotAnnotations(p.arxivId) : [];
       await fetchJson(`/api/saved/${encodeURIComponent(p.arxivId)}`, { method: "DELETE" });
       if (selectedId === p.arxivId) closePaper();
       await reload();
@@ -910,6 +911,7 @@ function SavedPageInner() {
           label: "Undo",
           run: async () => {
             await sendJson("/api/saved", "POST", { ...p, labelNames: p.labelNames ?? [] });
+            await restoreAnnotations(p.arxivId, highlights);
             await reload();
           },
         },

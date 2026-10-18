@@ -7,16 +7,22 @@ export const dynamic = "force-dynamic";
 
 const COLORS = new Set(["yellow", "green", "blue", "pink", "purple"]);
 
-type Rect = [number, number, number, number];
+// [x, y, w, h] as fractions of the page, optionally followed by the page number the rect is on
+// (highlights that cross a page break have rects on two pages).
+type Rect = [number, number, number, number] | [number, number, number, number, number];
 
 function cleanRects(raw: unknown): Rect[] {
   const arr = Array.isArray(raw) ? raw : [];
   const clamp = (n: unknown) => Math.min(1, Math.max(0, Number(n) || 0));
   return arr
-    .filter((r): r is unknown[] => Array.isArray(r) && r.length === 4)
-    .map((r) => r.map(clamp) as Rect)
-    .filter(([, , w, h]) => w > 0 && h > 0)
-    .slice(0, 200);
+    .filter((r): r is unknown[] => Array.isArray(r) && (r.length === 4 || r.length === 5))
+    .map((r) => {
+      const box = r.slice(0, 4).map(clamp) as [number, number, number, number];
+      const page = r.length === 5 ? Math.max(1, Math.floor(Number(r[4]) || 1)) : null;
+      return (page ? [...box, page] : box) as Rect;
+    })
+    .filter((r) => r[2] > 0 && r[3] > 0)
+    .slice(0, 400);
 }
 
 function toClient(a: { id: number; version: string; page: number; rects: string; quote: string; note: string; color: string; createdAt: Date; updatedAt: Date }) {
@@ -74,7 +80,8 @@ export async function POST(req: Request) {
       version: String(body?.version ?? "").slice(0, 10),
       page,
       rects: JSON.stringify(rects),
-      quote: String(body?.quote ?? "").slice(0, 4000),
+      // eslint-disable-next-line no-control-regex
+      quote: String(body?.quote ?? "").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").slice(0, 4000),
       note: String(body?.note ?? "").slice(0, 20000),
       color: COLORS.has(body?.color) ? body.color : "yellow",
     },

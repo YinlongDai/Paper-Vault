@@ -9,7 +9,9 @@ import { fetchJson, renderMarkdown, sendJson } from "@/lib/papers";
 import { useToast } from "./providers";
 import { PrivateNote, Spinner } from "./ui";
 
-type Rect = [number, number, number, number]; // x, y, w, h as fractions of the page
+// x, y, w, h as fractions of the page, optionally followed by the page number (for highlights across pages)
+type Rect = [number, number, number, number] | [number, number, number, number, number];
+const rectPage = (r: Rect, fallback: number) => (r.length === 5 ? r[4] : fallback);
 
 export type Annotation = {
   id: number;
@@ -55,10 +57,10 @@ function loadPdfjs() {
   return pdfjsPromise;
 }
 
-/** Merge per-span client rects into one rect per line so highlights look continuous. */
-function mergeLineRects(rects: Rect[]): Rect[] {
+/** Merge per-span client rects into one rect per line so highlights look continuous (within one page). */
+function mergeLineRects(rects: [number, number, number, number][]): [number, number, number, number][] {
   const sorted = [...rects].sort((a, b) => a[1] - b[1] || a[0] - b[0]);
-  const out: Rect[] = [];
+  const out: [number, number, number, number][] = [];
   for (const r of sorted) {
     const last = out[out.length - 1];
     if (last) {
@@ -215,7 +217,8 @@ function PdfPage({
       {!rendered && <div className="pdf-page-loading">Page {pageNumber}</div>}
       <div className="hl-layer" aria-hidden="true">
         {annotations.map((a) =>
-          a.rects.map((r, i) => (
+          a.rects.map((r, i) =>
+            rectPage(r, a.page) !== pageNumber ? null : (
             <div
               key={`${a.id}-${i}`}
               className={`hl ${activeId === a.id ? "active" : ""}`}
@@ -227,7 +230,8 @@ function PdfPage({
                 background: HIGHLIGHT_COLORS[a.color] ?? HIGHLIGHT_COLORS.yellow,
               }}
             />
-          ))
+            )
+          )
         )}
       </div>
       <div ref={textRef} className="textLayer" />
@@ -241,7 +245,7 @@ function PdfPage({
           );
         })}
       </div>
-      {annotations.map((a) => (
+      {annotations.filter((a) => a.page === pageNumber).map((a) => (
         <button
           key={`m-${a.id}`}
           type="button"
@@ -695,23 +699,32 @@ export function PdfReader({
       const range = sel.getRangeAt(0);
       const startEl = (range.startContainer as HTMLElement).parentElement?.closest?.(".pdf-page") as HTMLElement | null;
       if (!startEl || !innerRef.current?.contains(startEl)) return;
-      const page = Number(startEl.dataset.page);
-      const pr = startEl.getBoundingClientRect();
-      const rects: Rect[] = [];
+      // Assign every selected line box to the page it sits on (a selection may cross a page break).
+      const pageBoxes = [...pageEls.current.entries()].map(([n, el]) => ({ n, box: el.getBoundingClientRect() }));
+      const byPage = new Map<number, [number, number, number, number][]>();
       for (const r of Array.from(range.getClientRects())) {
         if (r.width < 1 || r.height < 1) continue;
         const cx = r.left + r.width / 2;
         const cy = r.top + r.height / 2;
-        if (cx < pr.left || cx > pr.right || cy < pr.top || cy > pr.bottom) continue; // keep the start page only
-        rects.push([(r.left - pr.left) / pr.width, (r.top - pr.top) / pr.height, r.width / pr.width, r.height / pr.height]);
+        const hit = pageBoxes.find(({ box }) => cx >= box.left && cx <= box.right && cy >= box.top && cy <= box.bottom);
+        if (!hit) continue;
+        const pr = hit.box;
+        const list = byPage.get(hit.n) ?? [];
+        list.push([(r.left - pr.left) / pr.width, (r.top - pr.top) / pr.height, r.width / pr.width, r.height / pr.height]);
+        byPage.set(hit.n, list);
       }
-      const quote = sel.toString().replace(/\s+/g, " ").trim();
+      if (!byPage.size) return;
+      const pages = [...byPage.keys()].sort((a, b) => a - b).slice(0, 3);
+      const page = pages[0];
+      const rects: Rect[] = pages.flatMap((n) => mergeLineRects(byPage.get(n)!).map((r) => [...r, n] as Rect));
+      // eslint-disable-next-line no-control-regex
+      const quote = sel.toString().replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").replace(/\s+/g, " ").trim();
       if (!rects.length || !quote) return;
       const last = range.getBoundingClientRect();
       const host = scrollRef.current!.getBoundingClientRect();
       setPending({
         page,
-        rects: mergeLineRects(rects),
+        rects,
         quote,
         x: Math.min(Math.max(last.left + last.width / 2 - host.left, 90), host.width - 90),
         y: last.bottom - host.top + scrollRef.current!.scrollTop + 8,
@@ -922,7 +935,7 @@ export function PdfReader({
                   pageNumber={i + 1}
                   size={s}
                   scale={scale}
-                  annotations={annotations.filter((a) => a.page === i + 1)}
+                  annotations={annotations.filter((a) => a.page === i + 1 || a.rects.some((r) => rectPage(r, a.page) === i + 1))}
                   activeId={activeId}
                   onInternalLink={goToDest}
                   onMarkerClick={(id) => {

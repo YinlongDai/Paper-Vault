@@ -270,3 +270,20 @@ export function versionOf(id: string) {
 export function titleKey(title: string) {
   return "title:" + String(title || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
+
+/** Copy a paper's highlights before removing it, so "Undo" can put them back. */
+export async function snapshotAnnotations(arxivId: string): Promise<unknown[]> {
+  try {
+    const j = await fetchJson<{ annotations: unknown[] }>(`/api/annotations?arxivId=${encodeURIComponent(arxivId)}`);
+    return j.annotations ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function restoreAnnotations(arxivId: string, list: unknown[]) {
+  for (const a of list as Record<string, unknown>[]) {
+    if (a.noteHidden) continue; // never write back redacted filler
+    await sendJson("/api/annotations", "POST", { ...a, arxivId }).catch(() => {});
+  }
+}

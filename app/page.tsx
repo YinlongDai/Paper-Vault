@@ -9,8 +9,10 @@ import {
   fetchJson,
   formatDate,
   isOpenAlex,
+  restoreAnnotations,
   sendJson,
   shortAuthors,
+  snapshotAnnotations,
 } from "@/lib/papers";
 import { useCanEdit, useToast } from "./components/providers";
 import { LabelChip, LabelPicker, Modal, ReadOnlyNotice, SearchIcon, Spinner, StarIcon } from "./components/ui";
@@ -303,6 +305,7 @@ function HomeInner() {
   async function unsave(p: Paper) {
     const prev = saved[p.arxivId];
     try {
+      const highlights = prev?.annotationCount ? await snapshotAnnotations(p.arxivId) : [];
       await fetchJson(`/api/saved/${encodeURIComponent(p.arxivId)}`, { method: "DELETE" });
       await loadSaved();
       toast("Removed from your library", {
@@ -311,6 +314,7 @@ function HomeInner() {
               label: "Undo",
               run: async () => {
                 await sendJson("/api/saved", "POST", { ...prev, labelNames: prev.labelNames ?? [] });
+                await restoreAnnotations(prev.arxivId, highlights);
                 await loadSaved();
               },
             }

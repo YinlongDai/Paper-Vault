@@ -13,11 +13,17 @@ type RelatedPaper = {
   authors: string;
   citedBy: number;
   arxivId: string;
+  doi: string;
   url: string;
   abstract: string;
 };
 
-type Data = { references: RelatedPaper[]; citations: RelatedPaper[]; counts: { references: number; citations: number } };
+type Data = {
+  source?: string;
+  references: RelatedPaper[];
+  citations: RelatedPaper[];
+  counts: { references: number; citations: number };
+};
 
 /** "Cited by" and "References" for a paper, with one-click save for anything on arXiv. */
 export function RelatedPapers({
@@ -65,21 +71,33 @@ export function RelatedPapers({
   async function save(p: RelatedPaper) {
     setSaving(p.openalexId);
     try {
-      const body = p.arxivId
-        ? {
-            arxivId: p.arxivId,
-            absUrl: `https://arxiv.org/abs/${p.arxivId}`,
-            pdfUrl: `https://arxiv.org/pdf/${p.arxivId}`,
-          }
-        : { arxivId: `openalex:${p.openalexId}`, absUrl: p.url, pdfUrl: p.url };
-      await sendJson("/api/saved", "POST", {
-        ...body,
-        title: p.title,
-        authors: p.authors,
-        summary: p.abstract,
-        published: p.date || (p.year ? String(p.year) : ""),
-        labelNames: [],
-      });
+      if (p.arxivId) {
+        await sendJson("/api/saved", "POST", {
+          arxivId: p.arxivId,
+          absUrl: `https://arxiv.org/abs/${p.arxivId}`,
+          pdfUrl: `https://arxiv.org/pdf/${p.arxivId}`,
+          title: p.title,
+          authors: p.authors,
+          summary: p.abstract,
+          published: p.date || (p.year ? String(p.year) : ""),
+          labelNames: [],
+        });
+      } else if (p.openalexId.startsWith("https://openalex.org/")) {
+        await sendJson("/api/saved", "POST", {
+          arxivId: `openalex:${p.openalexId}`,
+          absUrl: p.url,
+          pdfUrl: p.url,
+          title: p.title,
+          authors: p.authors,
+          summary: p.abstract,
+          published: p.date || (p.year ? String(p.year) : ""),
+          labelNames: [],
+        });
+      } else {
+        // Not on arXiv and not from OpenAlex: resolve the DOI (OpenAlex, with any open-access PDF).
+        const r = await fetchJson<{ paper: Record<string, unknown> }>(`/api/resolve?input=${encodeURIComponent(p.doi)}`);
+        await sendJson("/api/saved", "POST", { ...r.paper, labelNames: [] });
+      }
       toast(`Saved “${p.title.slice(0, 60)}${p.title.length > 60 ? "…" : ""}”`);
       await onSaved();
     } catch (e: any) {
@@ -93,7 +111,7 @@ export function RelatedPapers({
   if (!data) {
     return (
       <div className="card row">
-        <Spinner /> <span className="muted">Loading citations and references from OpenAlex…</span>
+        <Spinner /> <span className="muted">Loading citations and references…</span>
       </div>
     );
   }
@@ -118,7 +136,7 @@ export function RelatedPapers({
         {view === "citations"
           ? `The ${data.citations.length} most-cited papers that cite this one.`
           : "Papers this one cites, most-cited first."}{" "}
-        Source: OpenAlex.
+        Source: {data.source ?? "OpenAlex"}.
       </div>
 
       {list.length === 0 ? (
@@ -148,7 +166,7 @@ export function RelatedPapers({
                   </div>
                   {open === p.openalexId && <div className="paper-abstract" style={{ fontSize: 13.5 }}>{p.abstract}</div>}
                 </div>
-                {saved ? (
+                {!saved && !p.arxivId && !p.doi && !p.openalexId.startsWith("https://openalex.org/") ? null : saved ? (
                   <span className="btn btn-sm btn-saved" style={{ cursor: "default" }}>
                     <StarIcon filled size={13} /> Saved
                   </span>

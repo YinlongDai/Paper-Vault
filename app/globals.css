@@ -1776,3 +1776,15 @@ span.priority-flag {
   transform: translateY(-2px);
   border-color: var(--accent);
 }
+
+.related-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+
+.related-row:first-child {
+  border-top: none;
+}

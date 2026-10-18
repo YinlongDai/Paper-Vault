@@ -265,3 +265,8 @@ export function diffWords(a: string, b: string): DiffPart[] {
 export function versionOf(id: string) {
   return (String(id || "").match(/(v\d+)$/i)?.[1] ?? "").toLowerCase();
 }
+
+/** Title key for matching the same paper across sources ("Attention Is All You Need!" → "attentionisallyouneed"). */
+export function titleKey(title: string) {
+  return "title:" + String(title || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}

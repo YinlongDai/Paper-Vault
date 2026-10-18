@@ -15,10 +15,11 @@ import {
   shortAuthors,
   toBibtex,
 } from "@/lib/papers";
-import { type ReadStatus, STATUS_LABEL, bareArxivId, newVersionAvailable, versionOf } from "@/lib/papers";
+import { type ReadStatus, STATUS_LABEL, bareArxivId, newVersionAvailable, titleKey, versionOf } from "@/lib/papers";
 import { useCanEdit, useToast } from "../components/providers";
 import { PdfReader } from "../components/pdf-reader";
 import { CodeIcon, GlobeIcon, PaperLinks } from "../components/paper-links";
+import { RelatedPapers } from "../components/related";
 import { PriorityToggle, ReadingProgress, StatusBadge, StatusPicker, nextStatus, statusOf } from "../components/reading";
 import { VersionsPanel, useVersions } from "../components/versions";
 import {
@@ -40,7 +41,7 @@ const UNLABELED = "__unlabeled__";
 
 type SortKey = "saved-desc" | "saved-asc" | "published-desc" | "published-asc" | "title" | "priority";
 const STATUS_FILTER = "status:";
-type Tab = "overview" | "pdf" | "versions" | "summary";
+type Tab = "overview" | "pdf" | "versions" | "related" | "summary";
 
 function parseMs(s?: string | null) {
   const ms = Date.parse(String(s || ""));
@@ -105,6 +106,7 @@ function PaperDetail({
   onChanged,
   onRemove,
   initialTab,
+  savedIds,
 }: {
   paper: Paper;
   labels: Label[];
@@ -117,6 +119,7 @@ function PaperDetail({
   onChanged: () => Promise<void>;
   onRemove: (p: Paper) => void;
   initialTab?: Tab;
+  savedIds: Set<string>;
 }) {
   const toast = useToast();
   const [tab, setTab] = useState<Tab>(initialTab ?? "overview");
@@ -388,6 +391,9 @@ function PaperDetail({
             Versions{versions && versions.length > 1 ? ` · ${versions.length}` : ""}
           </button>
         )}
+        <button type="button" role="tab" className="tab" aria-selected={tab === "related"} onClick={() => setTab("related")}>
+          Related
+        </button>
         <button type="button" role="tab" className="tab" aria-selected={tab === "summary"} onClick={() => setTab("summary")}>
           AI summary{hasText(paper.aiSummary) ? " ✓" : ""}
         </button>
@@ -540,6 +546,8 @@ function PaperDetail({
             }}
           />
         )}
+
+        {tab === "related" && <RelatedPapers arxivId={paper.arxivId} canEdit={canEdit} savedIds={savedIds} onSaved={onChanged} />}
 
         {tab === "summary" && (
           <section className="card">
@@ -794,6 +802,17 @@ function SavedPageInner() {
       .catch(() => {});
   }, [reload]);
 
+  const savedIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const p of items) {
+      const id = p.arxivId.toLowerCase();
+      ids.add(id);
+      ids.add(id.replace(/v\d+$/, ""));
+      ids.add(titleKey(p.title));
+    }
+    return ids;
+  }, [items]);
+
   const statusCounts = useMemo(() => {
     const c: Record<ReadStatus, number> = { unread: 0, reading: 0, done: 0 };
     for (const p of items) c[statusOf(p)]++;
@@ -966,7 +985,8 @@ function SavedPageInner() {
             onFilterLabel={filterByLabel}
             onChanged={reload}
             onRemove={removePaper}
-            initialTab={(["overview", "pdf", "versions", "summary"] as const).find((t) => t === searchParams.get("tab"))}
+            initialTab={(["overview", "pdf", "versions", "related", "summary"] as const).find((t) => t === searchParams.get("tab"))}
+            savedIds={savedIds}
           />
         ) : (
           <div className="empty">

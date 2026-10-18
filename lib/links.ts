@@ -104,17 +104,27 @@ async function arxivMeta(arxivBare: string): Promise<{ comment: string; summary:
   return { comment: pick("arxiv:comment"), summary: pick("summary") };
 }
 
-/** Scan all sources. Never throws: a failing source just contributes nothing. */
-export async function findLinks(opts: { arxivId: string; pdfUrl: string; abstract: string }): Promise<PaperLink[]> {
+/**
+ * Scan all sources. Never throws: a failing source just contributes nothing, and its error is reported
+ * in `failed` so problems are visible without breaking the page.
+ */
+export async function findLinks(opts: { arxivId: string; pdfUrl: string; abstract: string }): Promise<{ links: PaperLink[]; failed: string[] }> {
   const bare = opts.arxivId.replace(/v\d+$/i, "");
   const isArxiv = /^(\d{4}\.\d{4,5}|[a-z-]+(\.[A-Z]{2})?\/\d{7})$/i.test(bare);
-  if (!isArxiv) return [];
+  if (!isArxiv) return { links: [], failed: [] };
 
-  const settle = <T,>(p: Promise<T>, fallback: T) => p.catch((e) => (console.warn("[links]", String(e?.message ?? e)), fallback));
+  const failed: string[] = [];
+  const settle = <T,>(name: string, p: Promise<T>, fallback: T) =>
+    p.catch((e) => {
+      const msg = `${name}: ${String(e?.message ?? e).slice(0, 200)}`;
+      console.warn("[links]", msg);
+      failed.push(msg);
+      return fallback;
+    });
   const [pdfUrls, hf, meta] = await Promise.all([
-    settle(firstPageUrls(opts.pdfUrl || `https://arxiv.org/pdf/${opts.arxivId}`), [] as string[]),
-    settle(huggingFace(bare), null),
-    settle(arxivMeta(bare), { comment: "", summary: "" }),
+    settle("pdf", firstPageUrls(opts.pdfUrl || `https://arxiv.org/pdf/${opts.arxivId}`), [] as string[]),
+    settle("huggingface", huggingFace(bare), null),
+    settle("arxiv", arxivMeta(bare), { comment: "", summary: "" }),
   ]);
 
   const found = new Map<string, PaperLink>();
@@ -140,5 +150,8 @@ export async function findLinks(opts: { arxivId: string; pdfUrl: string; abstrac
 
   // Code first, then project pages; cap to keep the UI tidy.
   const items = [...found.values()];
-  return [...items.filter((l) => l.kind === "code").slice(0, 3), ...items.filter((l) => l.kind === "project").slice(0, 3)];
+  return {
+    links: [...items.filter((l) => l.kind === "code").slice(0, 3), ...items.filter((l) => l.kind === "project").slice(0, 3)],
+    failed,
+  };
 }

@@ -22,13 +22,16 @@ async function save(id: number, state: LinksState, checked: boolean) {
 }
 
 /** Re-scan, keeping manual links and anything the owner removed out of the result. */
-async function scan(paper: NonNullable<Awaited<ReturnType<typeof loadPaper>>>, prev: LinksState): Promise<LinksState> {
-  const found = await findLinks({ arxivId: paper.arxivId, pdfUrl: paper.pdfUrl, abstract: paper.summary });
+async function scan(
+  paper: NonNullable<Awaited<ReturnType<typeof loadPaper>>>,
+  prev: LinksState
+): Promise<LinksState & { failed: string[] }> {
+  const { links: found, failed } = await findLinks({ arxivId: paper.arxivId, pdfUrl: paper.pdfUrl, abstract: paper.summary });
   const removed = new Set(prev.removed.map((u) => u.toLowerCase()));
   const manual = prev.items.filter((l) => l.source === "manual");
   const seen = new Set(manual.map((l) => l.url.toLowerCase()));
   const auto = found.filter((l) => !removed.has(l.url.toLowerCase()) && !seen.has(l.url.toLowerCase()));
-  return { items: [...manual, ...auto], removed: prev.removed };
+  return { items: [...manual, ...auto], removed: prev.removed, failed };
 }
 
 /**
@@ -44,12 +47,17 @@ export async function GET(req: Request) {
 
   let state = parseLinks(paper.links);
   let checkedAt = paper.linksCheckedAt;
+  let failed: string[] = [];
   if (!checkedAt) {
-    state = await scan(paper, state);
-    await save(paper.id, state, true);
-    checkedAt = new Date();
+    const scanned = await scan(paper, state);
+    failed = scanned.failed;
+    state = { items: scanned.items, removed: scanned.removed };
+    // If every source failed, don't cache an empty result; try again next time.
+    const allFailed = failed.length >= 3;
+    await save(paper.id, state, !allFailed);
+    checkedAt = allFailed ? null : new Date();
   }
-  return NextResponse.json({ links: state.items, checkedAt });
+  return NextResponse.json({ links: state.items, checkedAt, ...(failed.length ? { failed } : {}) });
 }
 
 /**
@@ -70,8 +78,11 @@ export async function POST(req: Request) {
   let state = parseLinks(paper.links);
   const action = String(body?.action ?? "");
 
+  let failed: string[] = [];
   if (action === "rescan") {
-    state = await scan(paper, state);
+    const scanned = await scan(paper, state);
+    failed = scanned.failed;
+    state = { items: scanned.items, removed: scanned.removed };
     await save(paper.id, state, true);
   } else if (action === "add") {
     const url = normalizeUrl(String(body?.url ?? "")) ?? "";
@@ -97,5 +108,5 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   }
 
-  return NextResponse.json({ links: state.items });
+  return NextResponse.json({ links: state.items, ...(failed.length ? { failed } : {}) });
 }

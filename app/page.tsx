@@ -18,6 +18,7 @@ import { useCanEdit, useToast } from "./components/providers";
 import { LabelChip, LabelPicker, Modal, ReadOnlyNotice, SearchIcon, Spinner, StarIcon } from "./components/ui";
 import { HomeExtras } from "./components/home-extras";
 import { looksResolvable, resolveInput } from "./components/quick-add";
+import { FollowSearchButton } from "./components/followed-searches";
 
 type Field = "smart" | "title" | "author" | "abstract" | "all";
 type Sort = "relevance" | "submittedDate" | "lastUpdatedDate" | "citations";
@@ -457,6 +458,7 @@ function HomeInner() {
                   {page * PAGE_SIZE + 1}–{page * PAGE_SIZE + papers.length}
                 </span>
               )}
+              {!looksResolvable(urlQ) && <FollowSearchButton query={urlQ} field={field} />}
             </div>
 
             {error && (

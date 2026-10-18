@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { type Label, type Paper, colorForLabel, formatDate, shortAuthors, yearOf } from "@/lib/papers";
 import { LabelChip } from "./ui";
 import { ReadingProgress, statusOf } from "./reading";
+import { NewThisWeek } from "./followed-searches";
 
 function pickRandom<T>(arr: T[], avoid?: T): T | undefined {
   if (!arr.length) return undefined;
@@ -241,6 +242,7 @@ export function HomeExtras({ papers, labels }: { papers: Paper[]; labels: Label[
       </div>
 
       <ContinueReading papers={papers} />
+      <NewThisWeek />
 
       <div className="home-grid" style={{ marginTop: 20 }}>
         <LabelTimeline papers={papers} labels={labels} />

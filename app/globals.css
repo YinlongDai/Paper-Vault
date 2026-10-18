@@ -1793,3 +1793,26 @@ span.priority-flag {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.feeds {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.feed {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.feed-item {
+  display: grid;
+  gap: 1px;
+  text-decoration: none;
+}
+
+.feed-item:hover .tl-title {
+  color: var(--accent);
+}

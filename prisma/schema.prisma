@@ -72,3 +72,14 @@ model Annotation {
 
   @@index([paperId])
 }
+
+// A search the owner follows; the home page shows its newest arXiv papers.
+model SavedSearch {
+  id         Int       @id @default(autoincrement())
+  query      String
+  field      String    @default("smart")
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime?
+
+  @@unique([query, field])
+}

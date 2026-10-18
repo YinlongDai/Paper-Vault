@@ -700,25 +700,35 @@ function LibraryCard({
     <article className="card paper-card">
       <div className="row" style={{ alignItems: "flex-start", flexWrap: "nowrap", gap: 12 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <button type="button" className="paper-title" onClick={onOpen}>
-            {p.title}
-          </button>
+          <div className="card-title-line">
+            <button type="button" className="paper-title" onClick={onOpen}>
+              {p.title}
+            </button>
+            <span className="title-badges">
+              <StatusBadge status={status} onCycle={canEdit ? () => onStatus(nextStatus(status)) : undefined} />
+              {(p.priority ?? 0) > 0 && (
+                <span className="priority-flag on" style={{ padding: "0 7px", fontSize: 11.5 }} title="High priority">
+                  ⚑
+                </span>
+              )}
+              {newVersion && (
+                <button type="button" className="new-version-badge" style={{ border: "none", cursor: "pointer" }} title="A newer arXiv version is available" onClick={onOpen}>
+                  {newVersion} available
+                </button>
+              )}
+            </span>
+          </div>
           <div className="paper-authors" title={p.authors}>
             {shortAuthors(p.authors)}
-          </div>
-          <div className="row" style={{ gap: 6, marginTop: 6 }}>
-            <StatusBadge status={status} onCycle={canEdit ? () => onStatus(nextStatus(status)) : undefined} />
-            {(p.priority ?? 0) > 0 && <span className="priority-flag on" style={{ padding: "0 7px", fontSize: 11.5 }}>⚑</span>}
-            {newVersion && (
-              <button type="button" className="new-version-badge" style={{ border: "none", cursor: "pointer" }} title="A newer arXiv version is available" onClick={onOpen}>
-                {newVersion} available
-              </button>
-            )}
-            {status === "reading" && <ReadingProgress page={p.lastPage} count={p.pageCount} />}
           </div>
           <div className="meta row" style={{ gap: 0, marginTop: 6 }}>
             <span className={`badge ${openAlex ? "" : "badge-arxiv"}`}>{openAlex ? "OpenAlex" : "arXiv"}</span>
             {p.published && <span className="dot-sep">{formatDate(p.published)}</span>}
+            {status === "reading" && p.lastPage && p.pageCount ? (
+              <span className="dot-sep">
+                <ReadingProgress page={p.lastPage} count={p.pageCount} />
+              </span>
+            ) : null}
             {hasText(p.note) && (
               <span className="dot-sep" title="Has notes">
                 📝 notes

@@ -80,7 +80,7 @@ export async function POST(req: Request) {
       version: String(body?.version ?? "").slice(0, 10),
       page,
       rects: JSON.stringify(rects),
-      // eslint-disable-next-line no-control-regex
+       
       quote: String(body?.quote ?? "").replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").slice(0, 4000),
       note: String(body?.note ?? "").slice(0, 20000),
       color: COLORS.has(body?.color) ? body.color : "yellow",

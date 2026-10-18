@@ -6,6 +6,15 @@ import { useEffect, useRef, useState } from "react";
 import { colorForLabel } from "@/lib/papers";
 import { useViewer } from "./providers";
 
+/**
+ * Link to a NextAuth endpoint (/api/auth/...). These must be full page loads, not client-side
+ * navigation, so this is a plain <a> on purpose.
+ */
+export function AuthLink(props: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) {
+   
+  return <a {...props} />;
+}
+
 export function SearchIcon({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -58,14 +67,14 @@ export function TopBar() {
                 {viewer.name}
                 {!viewer.canEdit && " · read-only"}
               </span>
-              <a className="btn btn-sm btn-ghost" href="/api/auth/signout">
+              <AuthLink className="btn btn-sm btn-ghost" href="/api/auth/signout">
                 Sign out
-              </a>
+              </AuthLink>
             </div>
           ) : (
-            <a className="btn btn-sm" href="/api/auth/signin">
+            <AuthLink className="btn btn-sm" href="/api/auth/signin">
               Sign in
-            </a>
+            </AuthLink>
           ))}
       </div>
     </header>
@@ -84,13 +93,13 @@ export function ReadOnlyNotice({ what }: { what: string }) {
           : `You're viewing a read-only copy. Sign in as the owner to ${what}.`}
       </span>
       {viewer.signedIn ? (
-        <a className="btn btn-sm" href="/api/auth/signout">
+        <AuthLink className="btn btn-sm" href="/api/auth/signout">
           Switch account
-        </a>
+        </AuthLink>
       ) : (
-        <a className="btn btn-sm btn-primary" href="/api/auth/signin">
+        <AuthLink className="btn btn-sm btn-primary" href="/api/auth/signin">
           Sign in
-        </a>
+        </AuthLink>
       )}
     </div>
   );
@@ -111,9 +120,9 @@ export function PrivateNote({ text, compact }: { text: string; compact?: boolean
         ) : (
           <span>
             Private note ·{" "}
-            <a href="/api/auth/signin" style={{ textDecoration: "underline" }}>
+            <AuthLink href="/api/auth/signin" style={{ textDecoration: "underline" }}>
               sign in
-            </a>{" "}
+            </AuthLink>{" "}
             as the owner to read
           </span>
         )}

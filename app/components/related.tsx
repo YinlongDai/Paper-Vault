@@ -102,10 +102,10 @@ export function RelatedPapers({
     <section className="card">
       <div className="row" style={{ marginBottom: 12 }}>
         <div className="segmented" role="tablist">
-          <button type="button" role="tab" className="seg" aria-checked={view === "citations"} onClick={() => setView("citations")}>
+          <button type="button" role="tab" className="seg" aria-selected={view === "citations"} onClick={() => setView("citations")}>
             Cited by · {data.counts.citations.toLocaleString()}
           </button>
-          <button type="button" role="tab" className="seg" aria-checked={view === "references"} onClick={() => setView("references")}>
+          <button type="button" role="tab" className="seg" aria-selected={view === "references"} onClick={() => setView("references")}>
             References · {data.counts.references}
           </button>
         </div>

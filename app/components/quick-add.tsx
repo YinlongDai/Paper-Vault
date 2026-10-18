@@ -276,14 +276,14 @@ export function AddPaperModal({
 
   return (
     <Modal title="Add papers" onClose={onClose}>
-      <div className="segmented" style={{ marginBottom: 14 }}>
-        <button type="button" className="seg" aria-checked={tab === "link"} onClick={() => setTab("link")}>
+      <div className="segmented" role="tablist" style={{ marginBottom: 14 }}>
+        <button type="button" role="tab" className="seg" aria-selected={tab === "link"} onClick={() => setTab("link")}>
           Link / ID / DOI
         </button>
-        <button type="button" className="seg" aria-checked={tab === "bib"} onClick={() => setTab("bib")}>
+        <button type="button" role="tab" className="seg" aria-selected={tab === "bib"} onClick={() => setTab("bib")}>
           Import .bib
         </button>
-        <button type="button" className="seg" aria-checked={tab === "bookmarklet"} onClick={() => setTab("bookmarklet")}>
+        <button type="button" role="tab" className="seg" aria-selected={tab === "bookmarklet"} onClick={() => setTab("bookmarklet")}>
           Bookmarklet
         </button>
       </div>

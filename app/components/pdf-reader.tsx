@@ -720,7 +720,7 @@ export function PdfReader({
       const pages = [...byPage.keys()].sort((a, b) => a - b).slice(0, 3);
       const page = pages[0];
       const rects: Rect[] = pages.flatMap((n) => mergeLineRects(byPage.get(n)!).map((r) => [...r, n] as Rect));
-      // eslint-disable-next-line no-control-regex
+       
       const quote = sel.toString().replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "").replace(/\s+/g, " ").trim();
       if (!rects.length || !quote) return;
       const last = range.getBoundingClientRect();

@@ -1627,7 +1627,8 @@ button.paper-title:hover {
   cursor: pointer;
 }
 
-.seg[aria-checked="true"] {
+.seg[aria-checked="true"],
+.seg[aria-selected="true"] {
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--shadow);

@@ -1850,13 +1850,14 @@ span.priority-flag {
   display: inline;
 }
 
+/* Inline (not a flex box) so the browser may break the line before any badge. */
 .title-badges {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  display: inline;
+}
+
+.title-badges > * {
   margin-left: 8px;
   vertical-align: 2px;
-  white-space: nowrap;
 }
 
 /* Paper page: label chips continue the badge / date line and wrap with it. */
@@ -1866,8 +1867,4 @@ span.priority-flag {
   align-items: center;
   gap: 6px;
   margin-left: 12px;
-}
-
-.title-tail {
-  white-space: nowrap;
 }

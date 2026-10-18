@@ -1871,9 +1871,9 @@ span.priority-flag {
 
 /* ---------- horizontal label timeline (Library) ---------- */
 
-.htl-card {
+/* Floating: no card, heading or year axis. */
+.htl-float {
   margin-top: 14px;
-  padding-bottom: 10px;
 }
 
 .htl-scroll {
@@ -1903,24 +1903,6 @@ span.priority-flag {
   from {
     transform: scaleX(0);
   }
-}
-
-/* Year gridline across the chart, label along the bottom edge (clear of the title tags). */
-.htl-tick {
-  position: absolute;
-  width: 0;
-  border-left: 1px dashed color-mix(in srgb, var(--border-strong) 70%, transparent);
-  pointer-events: none;
-}
-
-.htl-tick span {
-  position: absolute;
-  bottom: -15px;
-  left: 0;
-  transform: translateX(-50%);
-  font-size: 10.5px;
-  color: var(--muted);
-  white-space: nowrap;
 }
 
 .htl-item {

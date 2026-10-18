@@ -73,40 +73,24 @@ export function HorizontalTimeline({
       return { p, t, x, lane: choice[0], side: choice[1], left };
     });
 
-    const ticks: { x: number; label: string }[] = [];
-    const y0 = new Date(t0).getUTCFullYear();
-    const y1 = new Date(t1).getUTCFullYear();
-    const step = Math.max(1, Math.ceil((y1 - y0 + 1) / 12));
-    for (let y = y0; y <= y1 + 1; y += step) {
-      const t = Date.UTC(y, 0, 1);
-      if (t >= t0 - span * 0.02 && t <= t1 + span * 0.02) ticks.push({ x: xOf(t), label: String(y) });
-    }
-    return { width, placed, ticks };
+    // Only reserve the rows that are actually used on each side of the axis.
+    const up = Math.max(0, ...placed.filter((x) => x.side < 0).map((x) => x.lane + 1));
+    const down = Math.max(0, ...placed.filter((x) => x.side > 0).map((x) => x.lane + 1));
+    return { width, placed, up, down };
   }, [dated, viewW]);
 
   const color = colorForLabel(label);
-  const height = LANES * 2 * LANE_H + 52; // room for the year labels along the bottom
-  const axisY = LANES * LANE_H + 17;
+  const up = layout?.up ?? 1;
+  const down = layout?.down ?? 0;
+  const axisY = up * LANE_H + 8;
+  const height = axisY + down * LANE_H + 12;
 
   return (
-    <section className="card htl-card" style={{ "--tl-color": color } as React.CSSProperties}>
-      <div className="row" style={{ marginBottom: 6 }}>
-        <h2 className="section-title" style={{ margin: 0 }}>
-          Timeline
-        </h2>
-        <span className="meta" style={{ fontSize: 12.5 }}>
-          {dated.length} paper{dated.length === 1 ? "" : "s"} by publication date · hover to focus, click to open
-        </span>
-      </div>
+    <div className="htl-float" style={{ "--tl-color": color } as React.CSSProperties}>
       <div ref={wrapRef} className="htl-scroll" onMouseLeave={() => onHover(null)}>
         {layout && (
           <div className="htl" style={{ width: layout.width, height }}>
             <div className="htl-axis" style={{ top: axisY }} />
-            {layout.ticks.map((tk) => (
-              <div key={tk.label} className="htl-tick" style={{ left: tk.x, top: 0, height: height - 16 }}>
-                <span>{tk.label}</span>
-              </div>
-            ))}
             {layout.placed.map(({ p, x, lane, side, left }, i) => {
               const labelTop = side < 0 ? axisY - (lane + 1) * LANE_H - 4 : axisY + lane * LANE_H + 12;
               const stemTop = side < 0 ? labelTop + 40 : axisY;
@@ -139,6 +123,6 @@ export function HorizontalTimeline({
           </div>
         )}
       </div>
-    </section>
+    </div>
   );
 }

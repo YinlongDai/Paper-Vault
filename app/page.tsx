@@ -13,7 +13,7 @@ import {
   shortAuthors,
 } from "@/lib/papers";
 import { useCanEdit, useToast } from "./components/providers";
-import { LabelChip, LabelPicker, Modal, SearchIcon, Spinner, StarIcon } from "./components/ui";
+import { LabelChip, LabelPicker, Modal, ReadOnlyNotice, SearchIcon, Spinner, StarIcon } from "./components/ui";
 
 type Field = "smart" | "title" | "author" | "abstract" | "all";
 type Sort = "relevance" | "submittedDate" | "lastUpdatedDate" | "citations";
@@ -167,19 +167,30 @@ function HomeInner() {
 
   useEffect(() => setDraft(urlQ), [urlQ]);
 
+  // Latest committed state, updated synchronously so quick successive changes don't overwrite each other
+  // before the router has applied the previous URL.
+  const latest = useRef({ q: urlQ, field, sort, order });
+  useEffect(() => {
+    latest.current = { q: urlQ, field, sort, order };
+  }, [urlQ, field, sort, order]);
+
   const setUrl = useCallback(
     (next: Partial<{ q: string; field: Field; sort: Sort; order: Order; page: number }>) => {
+      const { page: pg = 0, ...rest } = next;
+      const cur = { ...latest.current, ...rest };
+      latest.current = cur;
+
+      // Options are written to the URL even before a query exists, otherwise the dropdowns would snap back.
       const sp = new URLSearchParams();
-      const q = next.q ?? urlQ;
-      if (q) sp.set("q", q);
-      sp.set("field", next.field ?? field);
-      sp.set("sort", next.sort ?? sort);
-      sp.set("order", next.order ?? order);
-      const pg = next.page ?? 0;
+      if (cur.q) sp.set("q", cur.q);
+      if (cur.field !== "title") sp.set("field", cur.field);
+      if (cur.sort !== "relevance") sp.set("sort", cur.sort);
+      if (cur.order !== "descending") sp.set("order", cur.order);
       if (pg > 0) sp.set("page", String(pg + 1));
-      router.push(q ? `/?${sp.toString()}` : "/", { scroll: false });
+      const qs = sp.toString();
+      router.push(qs ? `/?${qs}` : "/", { scroll: false });
     },
-    [router, urlQ, field, sort, order]
+    [router]
   );
 
   const loadSaved = useCallback(async () => {
@@ -378,19 +389,18 @@ function HomeInner() {
             <option value="lastUpdatedDate">Updated date</option>
           </select>
         </label>
-        <label className="field-label">
-          Order
-          <select
-            className="select"
-            value={order}
-            onChange={(e) => setUrl({ order: e.target.value as Order })}
-            disabled={sort === "relevance"}
-          >
-            <option value="descending">{sort === "citations" ? "Most first" : "Newest first"}</option>
-            <option value="ascending">{sort === "citations" ? "Fewest first" : "Oldest first"}</option>
-          </select>
-        </label>
+        {sort !== "relevance" && (
+          <label className="field-label">
+            Order
+            <select className="select" value={order} onChange={(e) => setUrl({ order: e.target.value as Order })}>
+              <option value="descending">{sort === "citations" ? "Most cited first" : "Newest first"}</option>
+              <option value="ascending">{sort === "citations" ? "Least cited first" : "Oldest first"}</option>
+            </select>
+          </label>
+        )}
       </div>
+
+      <ReadOnlyNotice what="save papers and add labels" />
 
       <section style={{ marginTop: 26 }}>
         {!urlQ ? (

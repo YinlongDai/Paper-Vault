@@ -16,7 +16,18 @@ import {
   toBibtex,
 } from "@/lib/papers";
 import { useCanEdit, useToast } from "../components/providers";
-import { LabelChip, LabelPicker, Menu, Modal, SearchIcon, Spinner, copyText } from "../components/ui";
+import {
+  ConfirmModal,
+  LabelChip,
+  LabelPicker,
+  Menu,
+  Modal,
+  PromptModal,
+  ReadOnlyNotice,
+  SearchIcon,
+  Spinner,
+  copyText,
+} from "../components/ui";
 
 const ALL = "__all__";
 const UNLABELED = "__unlabeled__";
@@ -252,7 +263,7 @@ function PaperDetail({
                 setLabelsOpen(true);
               }}
             >
-              + Label
+              + Add label
             </button>
           )}
           {!canEdit && paperLabels.length === 0 && <span className="meta">No labels</span>}
@@ -565,6 +576,9 @@ function SavedPageInner() {
   const [activeLabel, setActiveLabel] = useState<string>(ALL);
   const [searchText, setSearchText] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("saved-desc");
+  const [labelDialog, setLabelDialog] = useState<
+    { kind: "create" } | { kind: "rename"; name: string } | { kind: "delete"; name: string } | null
+  >(null);
 
   const reload = useCallback(async () => {
     try {
@@ -666,22 +680,29 @@ function SavedPageInner() {
     }
   }
 
-  async function createLabel() {
-    const name = window.prompt("New label name:")?.trim();
-    if (!name) return;
+  async function createLabel(name: string) {
+    if (labels.some((l) => l.name.toLowerCase() === name.toLowerCase())) {
+      toast(`Label "${name}" already exists`, { kind: "error" });
+      return;
+    }
     try {
       await sendJson("/api/saved", "POST", { kind: "label", name });
+      setLabelDialog(null);
       await reload();
+      toast(`Label "${name}" created`);
     } catch (e: any) {
       toast(`Couldn't create label: ${e?.message ?? e}`, { kind: "error" });
     }
   }
 
-  async function renameLabel(from: string) {
-    const to = window.prompt(`Rename label "${from}" to:`, from)?.trim();
-    if (!to || to === from) return;
+  async function renameLabel(from: string, to: string) {
+    if (to === from) {
+      setLabelDialog(null);
+      return;
+    }
     try {
       await sendJson("/api/saved", "PATCH", { kind: "label", from, to });
+      setLabelDialog(null);
       if (activeLabel === from) setActiveLabel(to);
       await reload();
     } catch (e: any) {
@@ -690,10 +711,9 @@ function SavedPageInner() {
   }
 
   async function deleteLabel(name: string) {
-    const ok = window.confirm(`Delete label "${name}"?\n\nIt will be removed from all papers. The papers themselves stay in your library.`);
-    if (!ok) return;
     try {
       await fetchJson(`/api/saved?type=label&name=${encodeURIComponent(name)}`, { method: "DELETE" });
+      setLabelDialog(null);
       if (activeLabel === name) setActiveLabel(ALL);
       await reload();
     } catch (e: any) {
@@ -712,6 +732,8 @@ function SavedPageInner() {
   if (selectedId) {
     return (
       <main className="container page">
+        <ReadOnlyNotice what="assign labels, write notes and generate summaries" />
+        <div style={{ height: 16 }} />
         {!loaded ? (
           <div className="stack">
             <div className="skeleton" style={{ height: 28, width: "60%" }} />
@@ -793,7 +815,7 @@ function SavedPageInner() {
                     aria-label={`Rename ${l.name}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      renameLabel(l.name);
+                      setLabelDialog({ kind: "rename", name: l.name });
                     }}
                   >
                     ✎
@@ -805,7 +827,7 @@ function SavedPageInner() {
                     aria-label={`Delete ${l.name}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      deleteLabel(l.name);
+                      setLabelDialog({ kind: "delete", name: l.name });
                     }}
                   >
                     ✕
@@ -815,7 +837,7 @@ function SavedPageInner() {
             </div>
           ))}
           {canEdit && (
-            <button type="button" className="side-item muted" onClick={createLabel}>
+            <button type="button" className="side-item muted" onClick={() => setLabelDialog({ kind: "create" })}>
               + New label
             </button>
           )}
@@ -832,6 +854,8 @@ function SavedPageInner() {
                 : ""}
             </span>
           </div>
+
+          <ReadOnlyNotice what="create labels, edit notes and manage papers" />
 
           <div className="row" style={{ marginTop: 14, gap: 10 }}>
             <div className="searchbox" style={{ flex: "1 1 260px" }}>
@@ -854,6 +878,11 @@ function SavedPageInner() {
               <option value="published-asc">Oldest published</option>
               <option value="title">Title A–Z</option>
             </select>
+            {canEdit && (
+              <button type="button" className="btn" style={{ height: 38 }} onClick={() => setLabelDialog({ kind: "create" })}>
+                + New label
+              </button>
+            )}
             <button type="button" className="btn" style={{ height: 38 }} onClick={exportBibtex} disabled={filtered.length === 0} title="Download the papers shown as a .bib file">
               Export .bib
             </button>
@@ -935,6 +964,36 @@ function SavedPageInner() {
           </div>
         </section>
       </div>
+
+      {labelDialog?.kind === "create" && (
+        <PromptModal
+          title="New label"
+          label="Label name"
+          confirmText="Create label"
+          onSubmit={createLabel}
+          onClose={() => setLabelDialog(null)}
+        />
+      )}
+      {labelDialog?.kind === "rename" && (
+        <PromptModal
+          title="Rename label"
+          label="New name"
+          initial={labelDialog.name}
+          confirmText="Rename"
+          onSubmit={(to) => renameLabel(labelDialog.name, to)}
+          onClose={() => setLabelDialog(null)}
+        />
+      )}
+      {labelDialog?.kind === "delete" && (
+        <ConfirmModal
+          title={`Delete label "${labelDialog.name}"?`}
+          confirmText="Delete label"
+          onConfirm={() => deleteLabel(labelDialog.name)}
+          onClose={() => setLabelDialog(null)}
+        >
+          It will be removed from every paper that has it. The papers themselves stay in your library.
+        </ConfirmModal>
+      )}
     </main>
   );
 }

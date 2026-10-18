@@ -4,9 +4,10 @@ import { denyUnlessEditor } from "@/lib/access";
 
 const DEFAULT_LABELS = ["Feature Learning", "Robotic Foundation Model", "World Model"];
 
+/** Seed starter labels into a brand-new, empty library only (so deleting every label doesn't bring them back). */
 async function ensureDefaultLabels() {
-  const count = await prisma.label.count();
-  if (count > 0) return;
+  const [labelCount, paperCount] = await Promise.all([prisma.label.count(), prisma.savedPaper.count()]);
+  if (labelCount > 0 || paperCount > 0) return;
 
   // Upsert one by one: works on both SQLite and Postgres and is safe if two requests race.
   for (const name of DEFAULT_LABELS) {

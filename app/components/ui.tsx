@@ -66,6 +66,145 @@ export function TopBar() {
   );
 }
 
+/** Tells signed-out / non-admin visitors of the hosted site why edit controls are missing. Renders nothing locally. */
+export function ReadOnlyNotice({ what }: { what: string }) {
+  const viewer = useViewer();
+  if (!viewer || !viewer.authEnabled || viewer.canEdit) return null;
+  return (
+    <div className="notice info row" style={{ marginTop: 16 }}>
+      <span style={{ flex: 1, minWidth: 200 }}>
+        {viewer.signedIn
+          ? `You're signed in as ${viewer.name || "a GitHub user"}, which only has read access. Only the owner can ${what}.`
+          : `You're viewing a read-only copy. Sign in as the owner to ${what}.`}
+      </span>
+      {viewer.signedIn ? (
+        <a className="btn btn-sm" href="/api/auth/signout">
+          Switch account
+        </a>
+      ) : (
+        <a className="btn btn-sm btn-primary" href="/api/auth/signin">
+          Sign in
+        </a>
+      )}
+    </div>
+  );
+}
+
+/** Single-line text prompt in a modal (replaces window.prompt, which some browsers block). */
+export function PromptModal({
+  title,
+  label,
+  initial = "",
+  confirmText = "Save",
+  onSubmit,
+  onClose,
+}: {
+  title: string;
+  label: string;
+  initial?: string;
+  confirmText?: string;
+  onSubmit: (value: string) => void | Promise<void>;
+  onClose: () => void;
+}) {
+  const [value, setValue] = useState(initial);
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    const v = value.trim();
+    if (!v || busy) return;
+    setBusy(true);
+    try {
+      await onSubmit(v);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={title}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="button" className="btn btn-primary" onClick={submit} disabled={!value.trim() || busy}>
+            {busy ? <Spinner /> : null}
+            {confirmText}
+          </button>
+        </>
+      }
+    >
+      <label className="field-label" style={{ display: "grid", gap: 6 }}>
+        {label}
+        <input
+          className="input"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              submit();
+            }
+          }}
+          autoFocus
+        />
+      </label>
+    </Modal>
+  );
+}
+
+export function ConfirmModal({
+  title,
+  children,
+  confirmText = "Delete",
+  onConfirm,
+  onClose,
+}: {
+  title: string;
+  children: React.ReactNode;
+  confirmText?: string;
+  onConfirm: () => void | Promise<void>;
+  onClose: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <Modal
+      title={title}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn btn-danger"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await onConfirm();
+              } finally {
+                setBusy(false);
+              }
+            }}
+            autoFocus
+          >
+            {busy ? <Spinner /> : null}
+            {confirmText}
+          </button>
+        </>
+      }
+    >
+      <div className="muted" style={{ fontSize: 14 }}>
+        {children}
+      </div>
+    </Modal>
+  );
+}
+
 export function Modal({
   title,
   onClose,

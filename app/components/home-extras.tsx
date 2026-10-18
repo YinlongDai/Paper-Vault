@@ -51,12 +51,10 @@ function LabelTimeline({ papers, labels }: { papers: Paper[]; labels: Label[] })
     const withTwo = labels.filter((l) => l.count >= 2).map((l) => l.name);
     return withTwo.length ? withTwo : labels.filter((l) => l.count >= 1).map((l) => l.name);
   }, [labels]);
-  const [label, setLabel] = useState<string | undefined>(undefined);
+  // Mounted only once the library has loaded, so the random pick can happen in the initializer.
+  const [picked, setLabel] = useState<string | undefined>(() => pickRandom(candidates));
   const [spin, setSpin] = useState(0);
-
-  useEffect(() => {
-    setLabel((cur) => (cur && candidates.includes(cur) ? cur : pickRandom(candidates)));
-  }, [candidates]);
+  const label = picked && candidates.includes(picked) ? picked : candidates[0];
 
   const items = useMemo(() => {
     if (!label) return [];
@@ -68,7 +66,6 @@ function LabelTimeline({ papers, labels }: { papers: Paper[]; labels: Label[] })
   if (!label) return null;
 
   const shown = items.slice(0, 8);
-  let lastYear = "";
   const color = colorForLabel(label);
 
   return (
@@ -103,8 +100,7 @@ function LabelTimeline({ papers, labels }: { papers: Paper[]; labels: Label[] })
       <div key={`${label}-${spin}`} className="timeline" style={{ "--tl-color": color } as React.CSSProperties}>
         {shown.map((p, i) => {
           const y = yearOf(p.published) || "Undated";
-          const showYear = y !== lastYear;
-          lastYear = y;
+          const showYear = i === 0 || y !== (yearOf(shown[i - 1].published) || "Undated");
           return (
             <div key={p.arxivId}>
               {showYear && (
@@ -134,87 +130,6 @@ function LabelTimeline({ papers, labels }: { papers: Paper[]; labels: Label[] })
   );
 }
 
-function Rediscover({ papers }: { papers: Paper[] }) {
-  const [pick, setPick] = useState<Paper | undefined>(undefined);
-  useEffect(() => {
-    setPick((cur) => (cur && papers.some((p) => p.arxivId === cur.arxivId) ? cur : pickRandom(papers)));
-  }, [papers]);
-  if (!pick) return null;
-
-  return (
-    <section className="card reveal" style={{ animationDelay: "180ms" }}>
-      <div className="row" style={{ marginBottom: 8 }}>
-        <h2 className="section-title" style={{ margin: 0 }}>
-          Rediscover
-        </h2>
-        <span className="spacer" />
-        {papers.length > 1 && (
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setPick((cur) => pickRandom(papers, cur))}>
-            Another
-          </button>
-        )}
-      </div>
-      <div key={pick.arxivId} className="reveal">
-        <Link href={paperHref(pick)} className="paper-title" style={{ fontSize: 15 }}>
-          {pick.title}
-        </Link>
-        <div className="meta" style={{ marginTop: 3 }}>
-          {shortAuthors(pick.authors, 3)} · {formatDate(pick.published)}
-        </div>
-        {pick.summary && <div className="paper-abstract clamp-3" style={{ fontSize: 13.5 }}>{pick.summary}</div>}
-        {(pick.labelNames ?? []).length > 0 && (
-          <div className="row" style={{ marginTop: 10, gap: 6 }}>
-            {(pick.labelNames ?? []).map((n) => (
-              <LabelChip key={n} name={n} />
-            ))}
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function YearChart({ papers }: { papers: Paper[] }) {
-  const data = useMemo(() => {
-    const counts = new Map<number, number>();
-    for (const p of papers) {
-      const y = Number(yearOf(p.published));
-      if (y) counts.set(y, (counts.get(y) ?? 0) + 1);
-    }
-    if (!counts.size) return [];
-    const ys = [...counts.keys()];
-    const min = Math.max(Math.min(...ys), Math.max(...ys) - 11);
-    const max = Math.max(...ys);
-    const out: { year: number; n: number }[] = [];
-    for (let y = min; y <= max; y++) out.push({ year: y, n: counts.get(y) ?? 0 });
-    return out;
-  }, [papers]);
-
-  if (data.length < 2) return null;
-  const peak = Math.max(...data.map((d) => d.n), 1);
-
-  return (
-    <section className="card reveal" style={{ animationDelay: "240ms" }}>
-      <h2 className="section-title">Papers by publication year</h2>
-      <div className="spark">
-        {data.map((d, i) => (
-          <div
-            key={d.year}
-            className="spark-bar"
-            title={`${d.year}: ${d.n} paper${d.n === 1 ? "" : "s"}`}
-            style={{ height: `${Math.max(4, (d.n / peak) * 100)}%`, animationDelay: `${i * 40}ms`, opacity: d.n ? 1 : 0.3 }}
-          />
-        ))}
-      </div>
-      <div className="row meta" style={{ fontSize: 11.5, marginTop: 6 }}>
-        <span>{data[0].year}</span>
-        <span className="spacer" />
-        <span>{data[data.length - 1].year}</span>
-      </div>
-    </section>
-  );
-}
-
 function RecentlySaved({ papers }: { papers: Paper[] }) {
   const recent = useMemo(
     () => [...papers].sort((a, b) => (Date.parse(b.createdAt ?? "") || 0) - (Date.parse(a.createdAt ?? "") || 0)).slice(0, 4),
@@ -222,7 +137,7 @@ function RecentlySaved({ papers }: { papers: Paper[] }) {
   );
   if (!recent.length) return null;
   return (
-    <section className="card reveal" style={{ animationDelay: "300ms" }}>
+    <section className="card reveal" style={{ animationDelay: "180ms" }}>
       <h2 className="section-title">Recently saved</h2>
       <div className="stack" style={{ gap: 10 }}>
         {recent.map((p) => (
@@ -269,11 +184,7 @@ export function HomeExtras({ papers, labels }: { papers: Paper[]; labels: Label[
 
       <div className="home-grid" style={{ marginTop: 20 }}>
         <LabelTimeline papers={papers} labels={labels} />
-        <div className="stack" style={{ gap: 20 }}>
-          <Rediscover papers={papers} />
-          <YearChart papers={papers} />
-          <RecentlySaved papers={papers} />
-        </div>
+        <RecentlySaved papers={papers} />
       </div>
     </div>
   );

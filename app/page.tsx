@@ -1,546 +1,525 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  type Label,
+  type Paper,
+  fetchJson,
+  formatDate,
+  isOpenAlex,
+  sendJson,
+  shortAuthors,
+} from "@/lib/papers";
+import { useCanEdit, useToast } from "./components/providers";
+import { LabelChip, LabelPicker, Modal, SearchIcon, Spinner, StarIcon } from "./components/ui";
 
-type Paper = {
-  arxivId: string;
-  title: string;
-  authors: string;
-  summary: string;
-  published: string;
-  absUrl: string;
-  pdfUrl: string;
-  labelNames?: string[];
-  source?: "arxiv" | "openalex";
-  citationCount?: number;
-  influentialCitationCount?: number;
-  doi?: string;
-};
+type Field = "smart" | "title" | "author" | "abstract" | "all";
+type Sort = "relevance" | "submittedDate" | "lastUpdatedDate" | "citations";
+type Order = "descending" | "ascending";
 
-const LABEL_PALETTE = [
-  "#6366F1", // indigo
-  "#22C55E", // green
-  "#06B6D4", // cyan
-  "#F59E0B", // amber
-  "#EF4444", // red
-  "#A855F7", // purple
-  "#EC4899", // pink
-  "#14B8A6", // teal
-  "#84CC16", // lime
-  "#3B82F6", // blue
+const PAGE_SIZE = 10;
+
+const SUGGESTIONS = [
+  "diffusion models",
+  "graph neural networks",
+  "retrieval augmented generation",
+  "foundation models",
+  "protein folding",
+  "LLM agents",
 ];
 
-function hashString(s: string) {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) {
-    h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  }
-  return h;
+const FIELDS: Field[] = ["smart", "title", "author", "abstract", "all"];
+const SORTS: Sort[] = ["relevance", "citations", "submittedDate", "lastUpdatedDate"];
+
+function pick<T extends string>(v: string | null, allowed: readonly T[], fallback: T): T {
+  return allowed.includes(v as T) ? (v as T) : fallback;
 }
 
-function colorForLabel(name: string) {
-  const idx = hashString(name.toLowerCase()) % LABEL_PALETTE.length;
-  return LABEL_PALETTE[idx];
-}
-
-
-export default function Home() {
-  const [q, setQ] = useState("");
-  const [field, setField] = useState<"smart" | "title" | "author" | "abstract" | "all">("title");
-  const [sort, setSort] = useState<"relevance" | "submittedDate" | "lastUpdatedDate" | "citations">("relevance");
-  const [order, setOrder] = useState<"descending" | "ascending">("descending");
-  const [papers, setPapers] = useState<Paper[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(0); // 0-based
-  const [savedMap, setSavedMap] = useState<Record<string, boolean>>({});
-  const [savedList, setSavedList] = useState<Paper[]>([]);
-  const [labels, setLabels] = useState<string[]>([]);
-  const [showLabelPrompt, setShowLabelPrompt] = useState(false);
-  const [pendingPaper, setPendingPaper] = useState<Paper | null>(null);
-  const [pendingSelected, setPendingSelected] = useState<Record<string, boolean>>({});
-  const pageSize = 10;
-
-  async function loadLabels() {
-    try {
-      const r = await fetch("/api/saved?type=labels");
-
-      if (!r.ok) {
-        const t = await r.text();
-        console.error("/api/saved?type=labels failed:", r.status, t);
-        setLabels([]);
-        return;
-      }
-
-      const text = await r.text();
-      if (!text.trim()) {
-        console.error("/api/saved?type=labels returned empty body");
-        setLabels([]);
-        return;
-      }
-
-      const j = JSON.parse(text);
-      setLabels((j.labels ?? []).map((x: any) => x.name));
-    } catch (e) {
-      console.error("loadLabels error:", e);
-      setLabels([]);
-    }
-  }
-
-  function openSaveWithLabels(p: Paper) {
-    setPendingPaper(p);
-    const init: Record<string, boolean> = {};
-    for (const name of labels) init[name] = false;
-    setPendingSelected(init);
-    setShowLabelPrompt(true);
-  }
-
-  async function confirmSaveWithLabels() {
-    if (!pendingPaper) return;
-    const chosen = Object.entries(pendingSelected)
-      .filter(([, v]) => v)
-      .map(([k]) => k);
-
-    const saveRes = await fetch("/api/saved", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...pendingPaper, labelNames: chosen }),
-    });
-
-    const saveJson: any = await saveRes.json().catch(() => ({}));
-    setShowLabelPrompt(false);
-    setPendingPaper(null);
-    setPendingSelected({});
-    await loadSaved();
-
-    if (saveJson?.shouldSummarize) {
-      // Fire-and-forget; summary is cached in DB
-      void fetch("/api/summarize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ arxivId: pendingPaper.arxivId }),
-      }).catch((e) => {
-        console.error("Auto summarize failed", e);
-      });
-    }
-  }
-
-  function cancelSaveWithLabels() {
-    setShowLabelPrompt(false);
-    setPendingPaper(null);
-    setPendingSelected({});
-  }
-
-  async function loadSaved() {
-    const r = await fetch("/api/saved");
-    const j = await r.json();
-    const items: Paper[] = j.items ?? [];
-    setSavedList(items);
-
-    const map: Record<string, boolean> = {};
-    for (const it of items) map[it.arxivId] = true;
-    setSavedMap(map);
-  }
-
-  async function removePaper(arxivId: string) {
-    await fetch(`/api/saved/${encodeURIComponent(arxivId)}`, { method: "DELETE" });
-    await loadSaved();
-  }
-
-  async function search(pageOverride?: number, qOverride?: string) {
-    setLoading(true);
-    try {
-      const effectiveQ = (qOverride ?? q).trim();
-      if (!effectiveQ) {
-        setPapers([]);
-        return;
-      }
-      const effectivePage = pageOverride ?? page;
-      const r = await fetch(
-        `/api/arxiv?q=${encodeURIComponent(effectiveQ)}&max=${pageSize}&start=${effectivePage * pageSize}` +
-          `&field=${encodeURIComponent(field)}&sort=${encodeURIComponent(sort)}&order=${encodeURIComponent(order)}`
-      );
-      const j = await r.json();
-      setPapers(j.papers ?? []);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    loadSaved();
-    loadLabels();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+function ResultCard({
+  p,
+  saved,
+  labelNames,
+  canEdit,
+  onSave,
+  onUnsave,
+}: {
+  p: Paper;
+  saved: boolean;
+  labelNames: string[];
+  canEdit: boolean;
+  onSave: () => void;
+  onUnsave: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const openAlex = isOpenAlex(p);
+  const long = (p.summary ?? "").length > 360;
 
   return (
-    <main style={{ maxWidth: 980, margin: "0 auto", padding: 24, fontFamily: "system-ui", position: "relative" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>📚 My Paper Vault</h1>
-        <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
-          <a href="/saved" style={{ fontSize: 14 }}>
-            Saved{savedList.length ? ` (${savedList.length})` : ""}
+    <article className="card paper-card">
+      <div className="card-head">
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <a className="paper-title" href={p.absUrl} target="_blank" rel="noreferrer">
+            {p.title}
           </a>
-        </div>
-      </div>
-
-      <p style={{ opacity: 0.75, marginTop: 8 }}>Search arXiv and save papers later.</p>
-
-      <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-        <input
-          value={q}
-          onChange={(e) => {
-            setQ(e.target.value);
-            setPage(0);
-          }}
-          placeholder="Search on arXiv..."
-          style={{ flex: 1, padding: 10, border: "1px solid #ddd", borderRadius: 8 }}
-        />
-        <select
-          value={field}
-          onChange={(e) => {
-            setField(e.target.value as any);
-            setPage(0);
-          }}
-          style={{ padding: 10, border: "1px solid #ddd", borderRadius: 8 }}
-        >
-          <option value="smart">Smart (Title + Abstract)</option>
-          <option value="title">Title</option>
-          <option value="author">Author</option>
-          <option value="abstract">Abstract</option>
-          <option value="all">All fields</option>
-        </select>
-
-        <select
-          value={sort}
-          onChange={(e) => {
-            setSort(e.target.value as any);
-            setPage(0);
-          }}
-          style={{ padding: 10, border: "1px solid #ddd", borderRadius: 8 }}
-        >
-          <option value="relevance">Relevance</option>
-          <option value="citations">Citations</option>
-          <option value="submittedDate">Date (submitted)</option>
-          <option value="lastUpdatedDate">Date (updated)</option>
-        </select>
-
-        <select
-          value={order}
-          onChange={(e) => {
-            setOrder(e.target.value as any);
-            setPage(0);
-          }}
-          style={{ padding: 10, border: "1px solid #ddd", borderRadius: 8 }}
-        >
-          <option value="descending">↓ Desc</option>
-          <option value="ascending">↑ Asc</option>
-        </select>
-
-        <button onClick={() => search()} style={{ padding: "10px 14px", borderRadius: 8, border: "1px solid #ddd" }}>
-          {loading ? "Searching..." : "Search"}
-        </button>
-      </div>
-
-      {/* Floating Prev/Next (only visible when clickable) */}
-      {page > 0 && !loading && (
-        <button
-          onClick={() => {
-            const newPage = Math.max(0, page - 1);
-            setPage(newPage);
-            search(newPage);
-          }}
-          aria-label="Previous page"
-          title="Previous"
-          style={{
-            position: "fixed",
-            left: "max(12px, calc(50% - 490px - 56px))",
-            top: "50%",
-            transform: "translateY(-50%)",
-            width: 44,
-            height: 44,
-            borderRadius: 999,
-            border: "1px solid #ddd",
-            background: "Canvas",
-            color: "CanvasText",
-            boxShadow: "0 6px 16px rgba(0,0,0,0.18)",
-            display: "grid",
-            placeItems: "center",
-            cursor: "pointer",
-            zIndex: 40,
-            fontSize: 18,
-            fontWeight: 700,
-          }}
-        >
-          ←
-        </button>
-      )}
-
-      {!loading && papers.length >= pageSize && (
-        <button
-          onClick={() => {
-            const newPage = page + 1;
-            setPage(newPage);
-            search(newPage);
-          }}
-          aria-label="Next page"
-          title="Next"
-          style={{
-            position: "fixed",
-            right: "max(12px, calc(50% - 490px - 56px))",
-            top: "50%",
-            transform: "translateY(-50%)",
-            width: 44,
-            height: 44,
-            borderRadius: 999,
-            border: "1px solid #ddd",
-            background: "Canvas",
-            color: "CanvasText",
-            boxShadow: "0 6px 16px rgba(0,0,0,0.18)",
-            display: "grid",
-            placeItems: "center",
-            cursor: "pointer",
-            zIndex: 40,
-            fontSize: 18,
-            fontWeight: 700,
-          }}
-        >
-          →
-        </button>
-      )}
-
-      {/* Keep the page indicator where it is */}
-      <div style={{ display: "flex", gap: 12, marginTop: 12, alignItems: "center" }}>
-        <div style={{ fontSize: 13, opacity: 0.75 }}>
-          Page {page + 1} (showing {pageSize} results)
-        </div>
-      </div>
-
-      <h2 style={{ marginTop: 24, fontSize: 20, fontWeight: 700 }}>Results</h2>
-
-      {papers.length === 0 ? (
-        !q.trim() ? (
-          <div style={{ opacity: 0.9, border: "1px solid #eee", borderRadius: 10, padding: 14 }}>
-            <div style={{ fontWeight: 700 }}>Try a search</div>
-            <div style={{ fontSize: 13, opacity: 0.8, marginTop: 6 }}>
-              Pick one to get started:
-            </div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
-              {[
-                "diffusion models",
-                "graph neural networks",
-                "retrieval augmented generation",
-                "foundation models",
-                "protein folding",
-                "LLM agents",
-              ].map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => {
-                    setQ(s);
-                    setPage(0);
-                    search(0, s);
-                  }}
-                  style={{
-                    padding: "6px 10px",
-                    borderRadius: 999,
-                    border: "1px solid #ddd",
-                    background: "transparent",
-                    cursor: "pointer",
-                    fontSize: 13,
-                  }}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 10 }}>
-              Tip: switch the dropdowns to search by Title/Author/Abstract and sort by Date.
-            </div>
+          <div className="paper-authors" title={p.authors}>
+            {shortAuthors(p.authors)}
           </div>
-        ) : (
-          <p style={{ opacity: 0.7 }}>No results. Try a different query or field.</p>
-        )
-      ) : (
-        <div style={{ display: "grid", gap: 12 }}>
-          {papers.map((p) => (
-            <div key={p.arxivId} style={{ border: "1px solid #eee", borderRadius: 10, padding: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                <div>
-                  <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
-                  <div style={{ fontWeight: 700 }}>{p.title}</div>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      padding: "2px 8px",
-                      borderRadius: 999,
-                      border: "1px solid #ddd",
-                      opacity: 0.85,
-                    }}
-                    title={p.source === "openalex" ? "OpenAlex" : "arXiv"}
-                  >
-                    {p.source === "openalex" ? "OpenAlex" : "arXiv"}
-                  </span>
-                </div>
-                  <div style={{ fontSize: 13, opacity: 0.8 }}>{p.authors}</div>
-                  <div style={{ fontSize: 12, opacity: 0.7 }}>
-                    Published: {p.published}
-                    {typeof p.citationCount === "number" ? ` · Citations: ${p.citationCount}` : ""}
-                    {typeof p.influentialCitationCount === "number" ? ` · Influential: ${p.influentialCitationCount}` : ""}
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 10, alignItems: "start" }}>
-                  <a href={p.absUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
-                    abs
-                  </a>
-                  <a href={p.pdfUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
-                    pdf
-                  </a>
+          <div className="meta row" style={{ gap: 0, marginTop: 6 }}>
+            <span className={`badge ${openAlex ? "" : "badge-arxiv"}`}>{openAlex ? "OpenAlex" : "arXiv"}</span>
+            {p.published && <span className="dot-sep">{formatDate(p.published)}</span>}
+            {typeof p.citationCount === "number" && (
+              <span className="dot-sep" title="Citations">
+                {p.citationCount.toLocaleString()} citations
+              </span>
+            )}
+            {typeof p.influentialCitationCount === "number" && p.influentialCitationCount > 0 && (
+              <span className="dot-sep" title="Influential citations">
+                {p.influentialCitationCount.toLocaleString()} influential
+              </span>
+            )}
+          </div>
+        </div>
 
-                  {!savedMap[p.arxivId] ? (
-                    <button
-                      onClick={() => openSaveWithLabels(p)}
-                      aria-label="Save"
-                      title="Save"
-                      style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd" }}
-                    >
-                      ⭐
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => removePaper(p.arxivId)}
-                      style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd" }}
-                    >
-                      Unsave
-                    </button>
-                  )}
-                </div>
-              </div>
+        <div className="row card-actions" style={{ flexWrap: "nowrap", gap: 6 }}>
+          {!openAlex && (
+            <a className="btn btn-sm btn-ghost" href={p.pdfUrl} target="_blank" rel="noreferrer">
+              PDF
+            </a>
+          )}
+          {canEdit &&
+            (saved ? (
+              <button type="button" className="btn btn-sm btn-saved" onClick={onUnsave} title="Remove from library">
+                <StarIcon filled size={14} />
+                Saved
+              </button>
+            ) : (
+              <button type="button" className="btn btn-sm" onClick={onSave} title="Save to library">
+                <StarIcon size={14} />
+                Save
+              </button>
+            ))}
+        </div>
+      </div>
 
-              <div style={{ marginTop: 10, fontSize: 14, lineHeight: 1.35, opacity: 0.9 }}>{p.summary}</div>
-            </div>
+      {saved && labelNames.length > 0 && (
+        <div className="row" style={{ marginTop: 10, gap: 6 }}>
+          {labelNames.map((n) => (
+            <LabelChip key={n} name={n} />
           ))}
         </div>
       )}
 
-      {showLabelPrompt && pendingPaper && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.55)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 20,
-            zIndex: 50,
-          }}
-          onClick={cancelSaveWithLabels}
-        >
-          <div
-            style={{
-              width: "min(720px, 100%)",
-              background: "Canvas",
-              color: "CanvasText",
-              borderRadius: 12,
-              border: "1px solid color-mix(in srgb, CanvasText 18%, transparent)",
-              padding: 16,
-              boxShadow: "0 10px 30px rgba(0,0,0,0.25)",
-            }}
-            onClick={(e) => e.stopPropagation()}
+      {p.summary ? (
+        <>
+          <div className={`paper-abstract ${expanded ? "" : "clamp-3"}`}>{p.summary}</div>
+          {long && (
+            <button type="button" className="link-btn" style={{ marginTop: 4 }} onClick={() => setExpanded((v) => !v)}>
+              {expanded ? "Show less" : "Show more"}
+            </button>
+          )}
+        </>
+      ) : (
+        <div className="paper-abstract meta">No abstract available.</div>
+      )}
+    </article>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <div className="card" aria-hidden="true">
+      <div className="skeleton" style={{ height: 18, width: "70%" }} />
+      <div className="skeleton" style={{ height: 13, width: "45%", marginTop: 10 }} />
+      <div className="skeleton" style={{ height: 12, width: "100%", marginTop: 16 }} />
+      <div className="skeleton" style={{ height: 12, width: "96%", marginTop: 7 }} />
+      <div className="skeleton" style={{ height: 12, width: "60%", marginTop: 7 }} />
+    </div>
+  );
+}
+
+function HomeInner() {
+  const router = useRouter();
+  const params = useSearchParams();
+  const canEdit = useCanEdit();
+  const toast = useToast();
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Committed search state lives in the URL so it survives navigation / refresh and can be shared.
+  const urlQ = (params.get("q") ?? "").trim();
+  const field = pick<Field>(params.get("field"), FIELDS, "title");
+  const sort = pick<Sort>(params.get("sort"), SORTS, "relevance");
+  const order = pick<Order>(params.get("order"), ["descending", "ascending"], "descending");
+  const page = Math.max(0, (parseInt(params.get("page") ?? "1", 10) || 1) - 1);
+
+  const [draft, setDraft] = useState(urlQ);
+  const [papers, setPapers] = useState<Paper[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [searched, setSearched] = useState(false);
+
+  const [saved, setSaved] = useState<Record<string, Paper>>({});
+  const [labels, setLabels] = useState<Label[]>([]);
+  const [pending, setPending] = useState<Paper | null>(null);
+  const [pendingLabels, setPendingLabels] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => setDraft(urlQ), [urlQ]);
+
+  const setUrl = useCallback(
+    (next: Partial<{ q: string; field: Field; sort: Sort; order: Order; page: number }>) => {
+      const sp = new URLSearchParams();
+      const q = next.q ?? urlQ;
+      if (q) sp.set("q", q);
+      sp.set("field", next.field ?? field);
+      sp.set("sort", next.sort ?? sort);
+      sp.set("order", next.order ?? order);
+      const pg = next.page ?? 0;
+      if (pg > 0) sp.set("page", String(pg + 1));
+      router.push(q ? `/?${sp.toString()}` : "/", { scroll: false });
+    },
+    [router, urlQ, field, sort, order]
+  );
+
+  const loadSaved = useCallback(async () => {
+    try {
+      const [s, l] = await Promise.all([
+        fetchJson<{ items: Paper[] }>("/api/saved"),
+        fetchJson<{ labels: Label[] }>("/api/saved?type=labels"),
+      ]);
+      const map: Record<string, Paper> = {};
+      for (const it of s.items ?? []) map[it.arxivId] = it;
+      setSaved(map);
+      setLabels(l.labels ?? []);
+    } catch (e) {
+      console.error("Failed to load library", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSaved();
+  }, [loadSaved]);
+
+  // Run the search whenever the committed (URL) state changes.
+  useEffect(() => {
+    if (!urlQ) {
+      setPapers([]);
+      setSearched(false);
+      setError("");
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    const url =
+      `/api/arxiv?q=${encodeURIComponent(urlQ)}&max=${PAGE_SIZE}&start=${page * PAGE_SIZE}` +
+      `&field=${field}&sort=${sort}&order=${order}`;
+    fetchJson<{ papers: Paper[] }>(url)
+      .then((j) => {
+        if (cancelled) return;
+        setPapers(j.papers ?? []);
+        setSearched(true);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setPapers([]);
+        setSearched(true);
+        setError(String(e?.message ?? e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [urlQ, field, sort, order, page]);
+
+  // "/" focuses the search box.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+      if (e.key === "/" && !typing) {
+        e.preventDefault();
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  function submit(q = draft) {
+    const trimmed = q.trim();
+    if (!trimmed) return;
+    setUrl({ q: trimmed, page: 0 });
+  }
+
+  function openSave(p: Paper) {
+    setPending(p);
+    setPendingLabels([]);
+  }
+
+  async function confirmSave() {
+    if (!pending) return;
+    const p = pending;
+    setSaving(true);
+    try {
+      const res = await sendJson<{ shouldSummarize?: boolean }>("/api/saved", "POST", { ...p, labelNames: pendingLabels });
+      setPending(null);
+      await loadSaved();
+      toast("Saved to your library", {
+        action: { label: "Open", run: () => router.push(`/saved?paper=${encodeURIComponent(p.arxivId)}`) },
+      });
+
+      if (res?.shouldSummarize) {
+        // Fire-and-forget; the summary is cached in the DB.
+        void fetch("/api/summarize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ arxivId: p.arxivId }),
+        }).catch((e) => console.error("Auto summarize failed", e));
+      }
+    } catch (e: any) {
+      toast(`Save failed: ${e?.message ?? e}`, { kind: "error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function unsave(p: Paper) {
+    const prev = saved[p.arxivId];
+    try {
+      await fetchJson(`/api/saved/${encodeURIComponent(p.arxivId)}`, { method: "DELETE" });
+      await loadSaved();
+      toast("Removed from your library", {
+        action: prev
+          ? {
+              label: "Undo",
+              run: async () => {
+                await sendJson("/api/saved", "POST", { ...prev, labelNames: prev.labelNames ?? [] });
+                await loadSaved();
+              },
+            }
+          : undefined,
+      });
+    } catch (e: any) {
+      toast(`Remove failed: ${e?.message ?? e}`, { kind: "error" });
+    }
+  }
+
+  const savedCount = Object.keys(saved).length;
+  const labelNames = useMemo(() => labels.map((l) => l.name), [labels]);
+  const hasNext = papers.length >= PAGE_SIZE;
+
+  return (
+    <main className="container page">
+      <div className="row" style={{ alignItems: "baseline" }}>
+        <h1 className="page-title">Find papers</h1>
+        <span className="meta">
+          arXiv + OpenAlex
+          {savedCount > 0 && (
+            <>
+              {" · "}
+              <Link href="/saved" style={{ textDecoration: "underline" }}>
+                {savedCount} saved
+              </Link>
+            </>
+          )}
+        </span>
+      </div>
+
+      <form
+        className="row"
+        style={{ marginTop: 16, gap: 10 }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <div className="searchbox">
+          <span className="searchbox-icon">
+            <SearchIcon />
+          </span>
+          <input
+            ref={inputRef}
+            className="input"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Search by title, author, or topic…"
+            aria-label="Search query"
+            autoFocus
+          />
+          {!draft && <span className="kbd hide-sm">/</span>}
+        </div>
+        <button type="submit" className="btn btn-primary" style={{ height: 44, padding: "0 18px" }} disabled={!draft.trim() || loading}>
+          {loading ? <Spinner /> : "Search"}
+        </button>
+      </form>
+
+      <div className="row" style={{ marginTop: 12, gap: 14 }}>
+        <label className="field-label">
+          Search in
+          <select className="select" value={field} onChange={(e) => setUrl({ field: e.target.value as Field })}>
+            <option value="title">Title</option>
+            <option value="smart">Title + abstract</option>
+            <option value="author">Author</option>
+            <option value="abstract">Abstract</option>
+            <option value="all">All fields</option>
+          </select>
+        </label>
+        <label className="field-label">
+          Sort by
+          <select className="select" value={sort} onChange={(e) => setUrl({ sort: e.target.value as Sort })}>
+            <option value="relevance">Relevance</option>
+            <option value="citations">Citations</option>
+            <option value="submittedDate">Submitted date</option>
+            <option value="lastUpdatedDate">Updated date</option>
+          </select>
+        </label>
+        <label className="field-label">
+          Order
+          <select
+            className="select"
+            value={order}
+            onChange={(e) => setUrl({ order: e.target.value as Order })}
+            disabled={sort === "relevance"}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-              <div style={{ fontWeight: 700 }}>Assign labels</div>
-              <button
-                onClick={cancelSaveWithLabels}
-                style={{
-                  background: "transparent",
-                  color: "CanvasText",
-                  border: "1px solid color-mix(in srgb, CanvasText 22%, transparent)",
-                  borderRadius: 8,
-                  padding: "6px 10px",
-                  cursor: "pointer",
-                }}
-              >
-                Close
-              </button>
-            </div>
+            <option value="descending">{sort === "citations" ? "Most first" : "Newest first"}</option>
+            <option value="ascending">{sort === "citations" ? "Fewest first" : "Oldest first"}</option>
+          </select>
+        </label>
+      </div>
 
-            <div style={{ marginTop: 10, fontSize: 14, opacity: 0.9 }}>
-              <div style={{ fontWeight: 700 }}>{pendingPaper.title}</div>
-              <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>{pendingPaper.authors}</div>
-            </div>
-
-            <div style={{ marginTop: 12 }}>
-              <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 8 }}>
-                Click to toggle labels:
-              </div>
-
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-                {labels.map((name) => {
-                  const active = !!pendingSelected[name];
-                  return (
-                    <button
-                      key={name}
-                      type="button"
-                      onClick={() =>
-                        setPendingSelected((prev) => ({
-                          ...prev,
-                          [name]: !prev[name],
-                        }))
-                      }
-                      style={{
-                        padding: "6px 10px",
-                        borderRadius: 999,
-                        border: `1px solid ${colorForLabel(name)}`,
-                        background: active
-                          ? `color-mix(in srgb, ${colorForLabel(name)} 18%, transparent)`
-                          : "transparent",
-                        color: colorForLabel(name),
-                        cursor: "pointer",
-                        fontSize: 13,
-                      }}
-                      aria-pressed={active}
-                    >
-                      {name}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 14 }}>
-              <button
-                onClick={cancelSaveWithLabels}
-                style={{
-                  background: "transparent",
-                  color: "CanvasText",
-                  border: "1px solid color-mix(in srgb, CanvasText 22%, transparent)",
-                  borderRadius: 8,
-                  padding: "8px 12px",
-                  cursor: "pointer",
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={confirmSaveWithLabels}
-                style={{
-                  background: "color-mix(in srgb, CanvasText 10%, transparent)",
-                  color: "CanvasText",
-                  border: "1px solid color-mix(in srgb, CanvasText 22%, transparent)",
-                  borderRadius: 8,
-                  padding: "8px 12px",
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                Save
-              </button>
+      <section style={{ marginTop: 26 }}>
+        {!urlQ ? (
+          <div className="empty">
+            <div className="empty-title">Start with a topic</div>
+            <div>Try one of these, or press <span className="kbd">/</span> to type your own.</div>
+            <div className="row" style={{ justifyContent: "center", marginTop: 16 }}>
+              {SUGGESTIONS.map((s) => (
+                <button key={s} type="button" className="chip chip-plain" onClick={() => submit(s)}>
+                  {s}
+                </button>
+              ))}
             </div>
           </div>
-        </div>
+        ) : (
+          <>
+            <div className="row" style={{ marginBottom: 12 }}>
+              <h2 className="section-title" style={{ margin: 0 }}>
+                Results{page > 0 ? ` · page ${page + 1}` : ""}
+              </h2>
+              <span className="spacer" />
+              {!loading && papers.length > 0 && (
+                <span className="meta">
+                  {page * PAGE_SIZE + 1}–{page * PAGE_SIZE + papers.length}
+                </span>
+              )}
+            </div>
+
+            {error && (
+              <div className="notice" style={{ marginBottom: 12 }}>
+                Search failed: {error}
+              </div>
+            )}
+
+            {loading ? (
+              <div className="stack">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <SkeletonCard key={i} />
+                ))}
+              </div>
+            ) : papers.length === 0 ? (
+              searched &&
+              !error && (
+                <div className="empty">
+                  <div className="empty-title">No results</div>
+                  <div>Try a different query, or search in “Title + abstract” or “All fields”.</div>
+                </div>
+              )
+            ) : (
+              <div className="stack">
+                {papers.map((p) => (
+                  <ResultCard
+                    key={p.arxivId}
+                    p={p}
+                    saved={!!saved[p.arxivId]}
+                    labelNames={saved[p.arxivId]?.labelNames ?? []}
+                    canEdit={canEdit}
+                    onSave={() => openSave(p)}
+                    onUnsave={() => unsave(p)}
+                  />
+                ))}
+              </div>
+            )}
+
+            {!loading && (page > 0 || hasNext) && (
+              <div className="row" style={{ justifyContent: "center", marginTop: 22, gap: 12 }}>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={page === 0}
+                  onClick={() => {
+                    setUrl({ page: page - 1 });
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                >
+                  ← Previous
+                </button>
+                <span className="meta">Page {page + 1}</span>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={!hasNext}
+                  onClick={() => {
+                    setUrl({ page: page + 1 });
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                >
+                  Next →
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </section>
+
+      {pending && (
+        <Modal
+          title="Save to library"
+          onClose={() => setPending(null)}
+          footer={
+            <>
+              <button type="button" className="btn" onClick={() => setPending(null)}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-primary" onClick={confirmSave} disabled={saving}>
+                {saving ? <Spinner /> : null}
+                {pendingLabels.length ? `Save with ${pendingLabels.length} label${pendingLabels.length > 1 ? "s" : ""}` : "Save"}
+              </button>
+            </>
+          }
+        >
+          <div style={{ fontWeight: 650, lineHeight: 1.35 }}>{pending.title}</div>
+          <div className="meta" style={{ marginTop: 4 }}>
+            {shortAuthors(pending.authors, 4)}
+          </div>
+          <div className="section-title" style={{ marginTop: 18 }}>
+            Labels (optional)
+          </div>
+          <LabelPicker all={labelNames} selected={pendingLabels} onChange={setPendingLabels} />
+        </Modal>
       )}
     </main>
+  );
+}
+
+export default function Home() {
+  return (
+    <Suspense fallback={null}>
+      <HomeInner />
+    </Suspense>
   );
 }

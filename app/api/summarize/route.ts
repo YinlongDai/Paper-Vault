@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { denyUnlessEditor } from "@/lib/access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -122,9 +123,13 @@ async function summarizePdfWithGemini(pdfUrl: string, prompt: string) {
 }
 
 export async function POST(req: Request) {
+  const denied = await denyUnlessEditor();
+  if (denied) return denied;
+
   try {
     const body = await req.json();
     const arxivId = String(body?.arxivId ?? "").trim();
+    const force = body?.force === true;
 
     if (!arxivId) {
       return NextResponse.json({ error: "arxivId is required" }, { status: 400 });
@@ -139,8 +144,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Paper not found" }, { status: 404 });
     }
 
-    // If already summarized, return cached
-    if (paper.aiSummary && paper.aiSummary.trim()) {
+    // If already summarized, return cached (unless the caller asked to regenerate)
+    if (!force && paper.aiSummary && paper.aiSummary.trim()) {
       return NextResponse.json({ ok: true, aiSummary: paper.aiSummary });
     }
 
@@ -159,9 +164,22 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, aiSummary: summary });
   } catch (e: any) {
+    const raw = String(e?.message ?? e);
+    console.error("[api/summarize] error:", raw);
     return NextResponse.json(
-      { error: "Failed to summarize", detail: String(e?.message ?? e) },
-      { status: 500 }
+      { error: "Failed to summarize", detail: friendlyError(raw) },
+      { status: /Missing GEMINI_API_KEY|API_KEY_INVALID/.test(raw) ? 503 : 500 }
     );
   }
+}
+
+/** Turn upstream errors into a one-line message the UI can show. */
+function friendlyError(raw: string) {
+  if (/Missing GEMINI_API_KEY/.test(raw)) return "AI summaries are not set up: add GEMINI_API_KEY to your env file.";
+  if (/API_KEY_INVALID|API key not valid/i.test(raw)) return "Gemini rejected the API key: check GEMINI_API_KEY.";
+  if (/PDF too large/.test(raw)) return raw;
+  if (/Failed to fetch PDF/.test(raw)) return raw;
+  if (/Gemini error 429|RESOURCE_EXHAUSTED/.test(raw)) return "Gemini rate limit or quota reached: try again later.";
+  const firstLine = raw.split("\n")[0];
+  return firstLine.length > 200 ? firstLine.slice(0, 200) + "…" : firstLine;
 }

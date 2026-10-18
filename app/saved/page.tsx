@@ -1,32 +1,32 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import {
+  type Label,
+  type Paper,
+  colorForLabel,
+  fetchJson,
+  formatDate,
+  isOpenAlex,
+  renderMarkdown,
+  sendJson,
+  shortAuthors,
+  toBibtex,
+} from "@/lib/papers";
+import { useCanEdit, useToast } from "../components/providers";
+import { LabelChip, LabelPicker, Menu, Modal, SearchIcon, Spinner, copyText } from "../components/ui";
 
-const LABEL_PALETTE = [
-  "#6366F1", // indigo
-  "#22C55E", // green
-  "#06B6D4", // cyan
-  "#F59E0B", // amber
-  "#EF4444", // red
-  "#A855F7", // purple
-  "#EC4899", // pink
-  "#14B8A6", // teal
-  "#84CC16", // lime
-  "#3B82F6", // blue
-];
+const ALL = "__all__";
+const UNLABELED = "__unlabeled__";
 
-function hashString(s: string) {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) {
-    h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  }
-  return h;
-}
+type SortKey = "saved-desc" | "saved-asc" | "published-desc" | "published-asc" | "title";
+type Tab = "overview" | "pdf" | "summary";
 
-function colorForLabel(name: string) {
-  const idx = hashString(name.toLowerCase()) % LABEL_PALETTE.length;
-  return LABEL_PALETTE[idx];
+function parseMs(s?: string | null) {
+  const ms = Date.parse(String(s || ""));
+  return Number.isFinite(ms) ? ms : 0;
 }
 
 function asEmbedPdfUrl(u: string) {
@@ -35,7 +35,6 @@ function asEmbedPdfUrl(u: string) {
 
   // If URL has no scheme (e.g., "arxiv.org/pdf/..."), treat it as https.
   if (!/^https?:\/\//i.test(s)) {
-    // Allow protocol-relative URLs too.
     if (s.startsWith("//")) s = "https:" + s;
     else s = "https://" + s.replace(/^\/+/, "");
   }
@@ -50,1297 +49,892 @@ function asEmbedPdfUrl(u: string) {
     return s;
   }
 
-  // If it already looks like a PDF, keep it.
   if (/\.pdf(\?.*)?$/i.test(s)) return s;
 
   // arXiv pdf links sometimes omit .pdf
-  if (/arxiv\.org\/pdf\//i.test(s)) {
-    return s + ".pdf";
-  }
+  if (/arxiv\.org\/pdf\//i.test(s)) return s + ".pdf";
 
   return s;
 }
 
-function BrowserPdfViewer({ url, title }: { url: string; title?: string }) {
-  const currentUrl = String(url || "").trim();
-  const proxied = currentUrl ? `/api/pdf?url=${encodeURIComponent(currentUrl)}` : "";
-
-  if (!currentUrl) return null;
-
-  return (
-    <div>
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <div style={{ fontSize: 13, opacity: 0.8 }}>{title || "PDF"}</div>
-        <a href={proxied} target="_blank" rel="noreferrer" style={{ fontSize: 13, marginLeft: "auto" }}>
-          Open PDF
-        </a>
-      </div>
-
-      <object
-        data={proxied}
-        type="application/pdf"
-        style={{
-          marginTop: 10,
-          width: "100%",
-          height: "80vh",
-          border: "1px solid #eee",
-          borderRadius: 12,
-          overflow: "hidden",
-        }}
-      >
-        <iframe
-          src={proxied}
-          title={title || "PDF"}
-          style={{ width: "100%", height: "80vh", border: "none" }}
-        />
-      </object>
-    </div>
-  );
+function downloadText(filename: string, text: string) {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function escapeHtml(s: string) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/\"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+function hasText(s?: string | null) {
+  return !!String(s ?? "").trim();
 }
 
-function renderMarkdown(md: string) {
-  let s = escapeHtml(md || "");
+/* ------------------------------------------------------------------ */
+/* Detail view                                                         */
+/* ------------------------------------------------------------------ */
 
-  // code blocks ```...```
-  s = s.replace(/```([\s\S]*?)```/g, (_m, code) => {
-    return `<pre style="white-space:pre-wrap;overflow:auto;padding:10px;border:1px solid #eee;border-radius:10px;background:color-mix(in srgb, CanvasText 4%, transparent);"><code>${code}</code></pre>`;
-  });
-
-  // inline code
-  s = s.replace(/`([^`]+?)`/g, (_m, code) => {
-    return `<code style="padding:1px 6px;border:1px solid #eee;border-radius:8px;background:color-mix(in srgb, CanvasText 4%, transparent);">${code}</code>`;
-  });
-
-  // headings
-  s = s.replace(/^###\s+(.+)$/gm, "<h3 style='margin:10px 0 6px;font-size:14px;'>$1</h3>");
-  s = s.replace(/^##\s+(.+)$/gm, "<h2 style='margin:12px 0 8px;font-size:16px;'>$1</h2>");
-  s = s.replace(/^#\s+(.+)$/gm, "<h1 style='margin:14px 0 10px;font-size:18px;'>$1</h1>");
-
-  // bold / italic
-  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-
-  // links [text](url)
-  s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\)]+)\)/g, "<a href='$2' target='_blank' rel='noreferrer'>$1</a>");
-
-  // paragraphs / line breaks
-  s = s.replace(/\n\n+/g, "</p><p style='margin:8px 0;'>");
-  s = s.replace(/\n/g, "<br />");
-
-  return `<p style='margin:8px 0;'>${s}</p>`;
-}
-
-type Paper = {
-  arxivId: string;
-  title: string;
-  authors: string;
-  summary: string;
-  note?: string;
-  aiSummary?: string;
-  published: string;
-  absUrl: string;
-  pdfUrl: string;
-  labelNames?: string[];
-  createdAt?: string; // ISO string from API; used as saved date
-};
-
-type Label = {
-  id: number;
-  name: string;
-};
-
-function SavedPageInner() {
-  const [summaryGenerating, setSummaryGenerating] = useState(false);
-  const [items, setItems] = useState<Paper[]>([]);
-  const [labels, setLabels] = useState<Label[]>([]);
-  const [activeLabel, setActiveLabel] = useState<string>("All");
-  const [searchText, setSearchText] = useState<string>("");
-  const [searchField, setSearchField] = useState<"title" | "author">("title");
-  const [sortBy, setSortBy] = useState<"saved" | "submitted">("saved");
-  const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
-  const [loading, setLoading] = useState(false);
+function PaperDetail({
+  paper,
+  labels,
+  canEdit,
+  prevId,
+  nextId,
+  onBack,
+  onOpen,
+  onFilterLabel,
+  onChanged,
+  onRemove,
+}: {
+  paper: Paper;
+  labels: Label[];
+  canEdit: boolean;
+  prevId: string | null;
+  nextId: string | null;
+  onBack: () => void;
+  onOpen: (id: string) => void;
+  onFilterLabel: (name: string) => void;
+  onChanged: () => Promise<void>;
+  onRemove: (p: Paper) => void;
+}) {
+  const toast = useToast();
+  const [tab, setTab] = useState<Tab>("overview");
   const [noteEditing, setNoteEditing] = useState(false);
-  const [noteDraft, setNoteDraft] = useState("");
+  const [noteDraft, setNoteDraft] = useState(String(paper.note ?? ""));
   const [noteSaving, setNoteSaving] = useState(false);
-  const [addLabelOpen, setAddLabelOpen] = useState(false);
-  const [addLabelChoice, setAddLabelChoice] = useState<string>("");
-  const [addLabelNewName, setAddLabelNewName] = useState("");
-  const [labelPickerMode, setLabelPickerMode] = useState<"add" | "remove">("add");
-  const [openMenuFor, setOpenMenuFor] = useState<string | null>(null);
-  const [deleteLabelOpen, setDeleteLabelOpen] = useState(false);
-  const [deleteLabelChoice, setDeleteLabelChoice] = useState<string>("");
-  
+  const [labelsOpen, setLabelsOpen] = useState(false);
+  const [labelDraft, setLabelDraft] = useState<string[]>([]);
+  const [summarizing, setSummarizing] = useState(false);
 
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const selectedId = (searchParams.get("paper") ?? "").trim();
+  const openAlex = isOpenAlex(paper);
+  const pdfUrl = openAlex ? "" : asEmbedPdfUrl(paper.pdfUrl) || asEmbedPdfUrl(paper.absUrl);
+  const proxiedPdf = pdfUrl ? `/api/pdf?url=${encodeURIComponent(pdfUrl)}` : "";
+  const paperLabels = paper.labelNames ?? [];
 
-  function parseMs(s?: string | null) {
-    const ms = Date.parse(String(s || ""));
-    return Number.isFinite(ms) ? ms : 0;
-  }
+  // Reset per-paper UI state when switching papers.
+  useEffect(() => {
+    setNoteEditing(false);
+    setNoteDraft(String(paper.note ?? ""));
+    setLabelsOpen(false);
+    window.scrollTo({ top: 0 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paper.arxivId]);
 
-  function norm(s: string) {
-    return String(s || "").toLowerCase();
-  }
+  // ←/→ move between papers in the current list (when not typing).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "ArrowLeft" && prevId) onOpen(prevId);
+      if (e.key === "ArrowRight" && nextId) onOpen(nextId);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [prevId, nextId, onOpen]);
 
-  async function loadItems() {
-    setLoading(true);
+  async function saveLabels(next: string[]) {
     try {
-      const r = await fetch("/api/saved");
-      const j = await r.json();
-      setItems(j.items ?? []);
-    } finally {
-      setLoading(false);
+      await sendJson("/api/saved", "PATCH", { arxivId: paper.arxivId, labelNames: next });
+      await onChanged();
+    } catch (e: any) {
+      toast(`Couldn't update labels: ${e?.message ?? e}`, { kind: "error" });
     }
-  }
-
-  async function loadLabels() {
-    const r = await fetch("/api/saved?type=labels");
-    const j = await r.json();
-    const nextLabels: Label[] = j.labels ?? [];
-    setLabels(nextLabels);
-    setDeleteLabelChoice((cur) => {
-      const c = String(cur || "").trim();
-      if (!c) return c;
-      return nextLabels.some((l) => l.name === c) ? c : "";
-    });
-    return;
-  }
-
-  async function addLabel() {
-    const name = window.prompt("New label name:");
-    if (!name) return;
-    const trimmed = name.trim();
-    if (!trimmed) return;
-
-    const r = await fetch("/api/saved", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind: "label", name: trimmed }),
-    });
-
-    if (!r.ok) {
-      const t = await r.text();
-      console.error("Create label failed:", r.status, t);
-      alert("Failed to create label. Check console for details.");
-      return;
-    }
-
-    await loadLabels();
-  }
-
-  async function deleteLabel() {
-    if (labels.length === 0) return;
-
-    const trimmed = String(deleteLabelChoice || "").trim();
-    if (!trimmed) return;
-
-    const ok = window.confirm(
-      `Delete label "${trimmed}"?\n\nThis will remove the label from ALL saved papers, but will NOT remove any papers.`
-    );
-    if (!ok) return;
-
-    const r = await fetch(`/api/saved?type=label&name=${encodeURIComponent(trimmed)}`, {
-      method: "DELETE",
-    });
-
-    if (!r.ok) {
-      const t = await r.text();
-      console.error("Delete label failed:", r.status, t);
-      alert("Failed to delete label. Check console for details.");
-      return;
-    }
-
-    if (activeLabel === trimmed) {
-      setActiveLabel("All");
-    }
-
-    setDeleteLabelOpen(false);
-    setDeleteLabelChoice("");
-
-    await loadLabels();
-    await loadItems();
-  }
-
-  async function addLabelToSelectedPaper() {
-    if (!selectedPaper) return;
-
-    const picked = (addLabelChoice || "").trim();
-    const isNew = picked === "__new__";
-    const name = (isNew ? addLabelNewName : picked).trim();
-    if (!name) return;
-
-    // 1) Ensure the label exists globally (idempotent)
-    const r1 = await fetch("/api/saved", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind: "label", name }),
-    });
-
-    if (!r1.ok) {
-      const t = await r1.text();
-      console.error("Create label failed:", r1.status, t);
-      alert("Failed to create label. Check console for details.");
-      return;
-    }
-
-    // 2) Attach label to this paper (idempotent)
-    const current = Array.isArray(selectedPaper.labelNames) ? selectedPaper.labelNames : [];
-    const next = Array.from(new Set([...current, name]));
-
-    const r2 = await fetch("/api/saved", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        arxivId: selectedPaper.arxivId,
-        title: selectedPaper.title,
-        authors: selectedPaper.authors,
-        summary: selectedPaper.summary,
-        pdfUrl: selectedPaper.pdfUrl,
-        absUrl: selectedPaper.absUrl,
-        published: selectedPaper.published,
-        labelNames: next,
-      }),
-    });
-
-    if (!r2.ok) {
-      const t = await r2.text();
-      console.error("Attach label failed:", r2.status, t);
-      alert("Failed to attach label. Check console for details.");
-      return;
-    }
-
-    await loadLabels();
-    await loadItems();
-
-    // close picker + reset
-    setAddLabelOpen(false);
-    setAddLabelChoice("");
-    setAddLabelNewName("");
-  }
-
-  async function removeLabelFromSelectedPaper(labelName: string) {
-    if (!selectedPaper) return;
-    const name = String(labelName || "").trim();
-    if (!name) return;
-
-    const current = Array.isArray(selectedPaper.labelNames) ? selectedPaper.labelNames : [];
-    const next = current.filter((n) => n !== name);
-
-    const r = await fetch("/api/saved", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        arxivId: selectedPaper.arxivId,
-        title: selectedPaper.title,
-        authors: selectedPaper.authors,
-        summary: selectedPaper.summary,
-        pdfUrl: selectedPaper.pdfUrl,
-        absUrl: selectedPaper.absUrl,
-        published: selectedPaper.published,
-        labelNames: next,
-      }),
-    });
-
-    if (!r.ok) {
-      const t = await r.text();
-      console.error("Detach label failed:", r.status, t);
-      alert("Failed to remove label. Check console for details.");
-      return;
-    }
-
-    await loadItems(); // refresh so chips update
-  }
-
-  async function removePaper(arxivId: string) {
-    const r = await fetch(`/api/saved/${encodeURIComponent(arxivId)}`, {
-      method: "DELETE",
-    });
-
-    if (!r.ok) {
-      const t = await r.text();
-      console.error("Remove failed:", r.status, t);
-      alert("Remove failed. Check console for details.");
-      return;
-    }
-
-    await loadItems();
   }
 
   async function saveNote() {
-    if (!selectedPaper) return;
     setNoteSaving(true);
     try {
-      const r = await fetch("/api/saved", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ arxivId: selectedPaper.arxivId, note: noteDraft }),
-      });
-
-      if (!r.ok) {
-        const t = await r.text();
-        console.error("Save note failed:", r.status, t);
-        alert("Failed to save note. Check console for details.");
-        return;
-      }
-
-      await loadItems(); // refresh items so selectedPaper.note updates
+      await sendJson("/api/saved", "PATCH", { arxivId: paper.arxivId, note: noteDraft });
+      await onChanged();
       setNoteEditing(false);
+      toast("Note saved");
+    } catch (e: any) {
+      toast(`Couldn't save note: ${e?.message ?? e}`, { kind: "error" });
     } finally {
       setNoteSaving(false);
     }
   }
 
-  async function generateSummary() {
-    if (!selectedPaper) return;
-    setSummaryGenerating(true);
+  async function generateSummary(force: boolean) {
+    setSummarizing(true);
     try {
-      const r = await fetch("/api/summarize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ arxivId: selectedPaper.arxivId }),
-      });
-
-      if (!r.ok) {
-        const j = await r.json().catch(() => null);
-        const msg = j?.detail || j?.error || (await r.text());
-        console.error("Summarize failed:", r.status, msg);
-        alert("Failed to generate summary. Check console for details.");
-        return;
-      }
-
-      await loadItems(); // ✅ refresh so selectedPaper.aiSummary updates
+      await sendJson("/api/summarize", "POST", { arxivId: paper.arxivId, force });
+      await onChanged();
+    } catch (e: any) {
+      toast(`Summary failed: ${e?.message ?? e}`, { kind: "error" });
     } finally {
-      setSummaryGenerating(false);
+      setSummarizing(false);
     }
-  }
-
-  useEffect(() => {
-    loadLabels();
-    loadItems();
-  }, []);
-
-  const filtered = useMemo(() => {
-    // 1) label filter
-    let out =
-      activeLabel === "All" ? items : items.filter((p) => (p.labelNames ?? []).includes(activeLabel));
-
-    // 2) search filter (title / author)
-    const q = searchText.trim().toLowerCase();
-    if (q) {
-      out = out.filter((p) => {
-        const hay = searchField === "author" ? norm(p.authors) : norm(p.title);
-        return hay.includes(q);
-      });
-    }
-
-    // 3) sort
-    const key = (p: Paper) => {
-      if (sortBy === "submitted") return parseMs(p.published);
-      // saved date: missing -> earliest
-      return parseMs(p.createdAt);
-    };
-
-    const dir = sortOrder === "asc" ? 1 : -1;
-
-    return [...out].sort((a, b) => {
-      const ka = key(a);
-      const kb = key(b);
-      if (ka !== kb) return ka < kb ? -1 * dir : 1 * dir;
-
-      const ta = norm(a.title);
-      const tb = norm(b.title);
-      if (ta !== tb) return ta < tb ? -1 : 1;
-
-      const ia = norm(a.arxivId);
-      const ib = norm(b.arxivId);
-      return ia < ib ? -1 : ia > ib ? 1 : 0;
-    });
-  }, [items, activeLabel, searchText, searchField, sortBy, sortOrder]);
-
-  const selectedPaper = useMemo(() => {
-    if (!selectedId) return null;
-    return items.find((p) => p.arxivId === selectedId) ?? null;
-  }, [items, selectedId]);
-
-  useEffect(() => {
-    if (selectedPaper) {
-      setNoteEditing(false);
-      setNoteDraft(String(selectedPaper.note ?? ""));
-      setAddLabelOpen(false);
-      setAddLabelChoice("");
-      setAddLabelNewName("");
-      setLabelPickerMode("add");
-    }
-  }, [selectedPaper]);
-
-  function openPaper(p: Paper) {
-    router.push(`/saved?paper=${encodeURIComponent(p.arxivId)}`);
-  }
-
-  function closePaper() {
-    router.push(`/saved`);
   }
 
   return (
-    <main
-      onClick={() => setOpenMenuFor(null)}
-      style={{ maxWidth: 980, margin: "0 auto", padding: 24, fontFamily: "system-ui" }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700, margin: 0 }}>⭐ Saved Papers</h1>
-        <a href="/" style={{ fontSize: 14 }}>
-          ← Back to Search
-        </a>
+    <div>
+      <div className="row">
+        <button type="button" className="btn btn-sm btn-ghost" onClick={onBack}>
+          ← Library
+        </button>
+        <span className="spacer" />
+        <button
+          type="button"
+          className="btn btn-sm btn-ghost"
+          disabled={!prevId}
+          onClick={() => prevId && onOpen(prevId)}
+          title="Previous paper (←)"
+        >
+          ‹ Prev
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm btn-ghost"
+          disabled={!nextId}
+          onClick={() => nextId && onOpen(nextId)}
+          title="Next paper (→)"
+        >
+          Next ›
+        </button>
       </div>
 
-      {!selectedId && (
-        <>
-          {/* Labels bar */}
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14, alignItems: "center" }}>
-            <button
-              onClick={() => setActiveLabel("All")}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 999,
-                border: "1px solid #ddd",
-                background: activeLabel === "All" ? "#f2f2f2" : "transparent",
-                cursor: "pointer",
-              }}
-            >
-              All
-            </button>
+      <div style={{ marginTop: 14 }}>
+        <h1 className="page-title" style={{ fontSize: 24, lineHeight: 1.25 }}>
+          {paper.title}
+        </h1>
+        <div className="paper-authors" style={{ fontSize: 14.5, marginTop: 8 }}>
+          {paper.authors}
+        </div>
+        <div className="meta row" style={{ gap: 0, marginTop: 8 }}>
+          <span className={`badge ${openAlex ? "" : "badge-arxiv"}`}>{openAlex ? "OpenAlex" : `arXiv ${paper.arxivId}`}</span>
+          {paper.published && <span className="dot-sep">Published {formatDate(paper.published)}</span>}
+          {paper.createdAt && <span className="dot-sep">Saved {formatDate(paper.createdAt)}</span>}
+        </div>
 
-            {labels.map((l) => (
-              <button
-                key={l.id}
-                onClick={() => setActiveLabel(l.name)}
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  border: `1px solid ${colorForLabel(l.name)}`,
-                  background:
-                    activeLabel === l.name
-                      ? `color-mix(in srgb, ${colorForLabel(l.name)} 18%, transparent)`
-                      : "transparent",
-                  color: colorForLabel(l.name),
-                  cursor: "pointer",
-                }}
-              >
-                {l.name}
-              </button>
-            ))}
-
-            <button
-              onClick={addLabel}
-              title="Add label"
-              style={{
-                padding: "6px 10px",
-                borderRadius: 999,
-                border: "1px solid #ddd",
-                cursor: "pointer",
-                fontWeight: 700,
-              }}
-            >
-              +
-            </button>
-
-            <button
-              onClick={() => {
-                if (labels.length === 0) return;
-                setDeleteLabelOpen((v) => {
-                  const next = !v;
-                  if (next) {
-                    const first = labels[0]?.name || "";
-                    setDeleteLabelChoice((cur) => (String(cur || "").trim() ? cur : first));
-                  }
-                  return next;
-                });
-              }}
-              title="Delete label"
-              style={{
-                padding: "6px 10px",
-                borderRadius: 999,
-                border: "1px solid #ddd",
-                cursor: labels.length === 0 ? "not-allowed" : "pointer",
-                fontWeight: 900,
-                opacity: labels.length === 0 ? 0.45 : 1,
-                background: "transparent",
-              }}
-              disabled={labels.length === 0}
-            >
-              −
-            </button>
-            {deleteLabelOpen && labels.length > 0 && (
-              <div
-                onClick={(e) => e.stopPropagation()}
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                  padding: "6px 10px",
-                  borderRadius: 999,
-                  border: "1px solid #eee",
-                  background: "color-mix(in srgb, CanvasText 3%, transparent)",
-                }}
-              >
-                <select
-                  value={deleteLabelChoice}
-                  onChange={(e) => setDeleteLabelChoice(e.target.value)}
-                  style={{
-                    fontSize: 13,
-                    padding: "4px 8px",
-                    borderRadius: 999,
-                    border: "1px solid #ddd",
-                    background: "transparent",
-                  }}
-                >
-                  {labels.map((l) => (
-                    <option key={l.id} value={l.name}>
-                      {l.name}
-                    </option>
-                  ))}
-                </select>
-
-                <button
-                  type="button"
-                  onClick={deleteLabel}
-                  style={{
-                    fontSize: 13,
-                    padding: "4px 10px",
-                    borderRadius: 999,
-                    border: "1px solid #ddd",
-                    fontWeight: 800,
-                    cursor: "pointer",
-                    background: "transparent",
-                  }}
-                  disabled={!String(deleteLabelChoice || "").trim()}
-                >
-                  Delete
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDeleteLabelOpen(false);
-                    setDeleteLabelChoice("");
-                  }}
-                  style={{
-                    fontSize: 13,
-                    padding: "4px 10px",
-                    borderRadius: 999,
-                    border: "1px solid #ddd",
-                    cursor: "pointer",
-                    background: "transparent",
-                    opacity: 0.85,
-                  }}
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
-          </div>
-          {/* Search + sort */}
-          <div
-            style={{
-              display: "flex",
-              gap: 10,
-              flexWrap: "wrap",
-              marginTop: 12,
-              alignItems: "center",
+        <div className="row" style={{ marginTop: 14 }}>
+          <a className="btn btn-sm" href={paper.absUrl} target="_blank" rel="noreferrer">
+            {openAlex ? "Open source page ↗" : "arXiv page ↗"}
+          </a>
+          {!openAlex && (
+            <a className="btn btn-sm" href={pdfUrl || paper.pdfUrl} target="_blank" rel="noreferrer">
+              PDF ↗
+            </a>
+          )}
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={async () => {
+              if (await copyText(toBibtex(paper))) toast("BibTeX copied");
             }}
           >
-            <input
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              placeholder={searchField === "author" ? "Search authors…" : "Search titles…"}
-              style={{
-                flex: "1 1 280px",
-                padding: "8px 10px",
-                borderRadius: 10,
-                border: "1px solid #ddd",
-                background: "transparent",
-              }}
+            Copy BibTeX
+          </button>
+          {canEdit && (
+            <button type="button" className="btn btn-sm btn-danger" onClick={() => onRemove(paper)}>
+              Remove
+            </button>
+          )}
+        </div>
+
+        <div className="row" style={{ marginTop: 14, gap: 6 }}>
+          {paperLabels.map((n) => (
+            <LabelChip
+              key={n}
+              name={n}
+              onClick={() => onFilterLabel(n)}
+              onRemove={canEdit ? () => saveLabels(paperLabels.filter((x) => x !== n)) : undefined}
             />
-
-            <select
-              value={searchField}
-              onChange={(e) => setSearchField(e.target.value as any)}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 10,
-                border: "1px solid #ddd",
-                background: "transparent",
-                fontSize: 13,
+          ))}
+          {canEdit && (
+            <button
+              type="button"
+              className="chip chip-plain"
+              onClick={() => {
+                setLabelDraft(paperLabels);
+                setLabelsOpen(true);
               }}
-              title="Search field"
             >
-              <option value="title">Title</option>
-              <option value="author">Author</option>
-            </select>
+              + Label
+            </button>
+          )}
+          {!canEdit && paperLabels.length === 0 && <span className="meta">No labels</span>}
+        </div>
+      </div>
 
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 10,
-                border: "1px solid #ddd",
-                background: "transparent",
-                fontSize: 13,
-              }}
-              title="Sort by"
-            >
-              <option value="saved">Saved date</option>
-              <option value="submitted">Submitted date</option>
-            </select>
+      <div className="tabs" role="tablist">
+        <button type="button" role="tab" className="tab" aria-selected={tab === "overview"} onClick={() => setTab("overview")}>
+          Overview
+        </button>
+        <button type="button" role="tab" className="tab" aria-selected={tab === "pdf"} onClick={() => setTab("pdf")}>
+          PDF
+        </button>
+        <button type="button" role="tab" className="tab" aria-selected={tab === "summary"} onClick={() => setTab("summary")}>
+          AI summary{hasText(paper.aiSummary) ? " ✓" : ""}
+        </button>
+      </div>
 
-            <select
-              value={sortOrder}
-              onChange={(e) => setSortOrder(e.target.value as any)}
-              style={{
-                padding: "8px 10px",
-                borderRadius: 10,
-                border: "1px solid #ddd",
-                background: "transparent",
-                fontSize: 13,
-              }}
-              title="Sort order"
-            >
-              <option value="desc">Newest first</option>
-              <option value="asc">Oldest first</option>
-            </select>
+      <div style={{ marginTop: 18 }}>
+        {tab === "overview" && (
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+              gap: 16,
+              alignItems: "start",
+            }}
+          >
+            <section className="card">
+              <h2 className="section-title">Abstract</h2>
+              <div className="paper-abstract" style={{ marginTop: 0 }}>
+                {paper.summary || <span className="meta">No abstract available.</span>}
+              </div>
+            </section>
 
-            {(searchText.trim() || activeLabel !== "All") && (
+            <section className="card">
+              <div className="row" style={{ marginBottom: 10 }}>
+                <h2 className="section-title" style={{ margin: 0 }}>
+                  Notes
+                </h2>
+                <span className="spacer" />
+                {canEdit &&
+                  (noteEditing ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-ghost"
+                        onClick={() => {
+                          setNoteDraft(String(paper.note ?? ""));
+                          setNoteEditing(false);
+                        }}
+                        disabled={noteSaving}
+                      >
+                        Cancel
+                      </button>
+                      <button type="button" className="btn btn-sm btn-primary" onClick={saveNote} disabled={noteSaving}>
+                        {noteSaving ? <Spinner /> : "Save"}
+                      </button>
+                    </>
+                  ) : (
+                    <button type="button" className="btn btn-sm" onClick={() => setNoteEditing(true)}>
+                      {hasText(paper.note) ? "Edit" : "Add note"}
+                    </button>
+                  ))}
+              </div>
+
+              {noteEditing ? (
+                <>
+                  <textarea
+                    className="textarea"
+                    value={noteDraft}
+                    onChange={(e) => setNoteDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                        e.preventDefault();
+                        saveNote();
+                      }
+                      if (e.key === "Escape") {
+                        setNoteDraft(String(paper.note ?? ""));
+                        setNoteEditing(false);
+                      }
+                    }}
+                    placeholder={"Write notes in Markdown…\n\n## Key idea\n- …"}
+                    style={{ minHeight: 260 }}
+                    autoFocus
+                  />
+                  <div className="meta" style={{ marginTop: 6, fontSize: 12 }}>
+                    Markdown supported · <span className="kbd">⌘/Ctrl</span> + <span className="kbd">Enter</span> to save ·{" "}
+                    <span className="kbd">Esc</span> to cancel
+                  </div>
+                </>
+              ) : hasText(paper.note) ? (
+                <div className="prose" dangerouslySetInnerHTML={{ __html: renderMarkdown(String(paper.note)) }} />
+              ) : (
+                <div className="meta">No notes yet.</div>
+              )}
+            </section>
+          </div>
+        )}
+
+        {tab === "pdf" &&
+          (proxiedPdf ? (
+            <div>
+              <div className="row" style={{ marginBottom: 10 }}>
+                <span className="meta">Served through the /api/pdf proxy to avoid CORS.</span>
+                <span className="spacer" />
+                <a className="btn btn-sm" href={proxiedPdf} target="_blank" rel="noreferrer">
+                  Open in new tab ↗
+                </a>
+              </div>
+              <iframe className="pdf-frame" src={proxiedPdf} title={`PDF: ${paper.title}`} />
+            </div>
+          ) : (
+            <div className="empty">
+              <div className="empty-title">No embeddable PDF</div>
+              <div>
+                This paper comes from OpenAlex.{" "}
+                <a href={paper.absUrl} target="_blank" rel="noreferrer" style={{ textDecoration: "underline" }}>
+                  Open the source page
+                </a>{" "}
+                to find the full text.
+              </div>
+            </div>
+          ))}
+
+        {tab === "summary" && (
+          <section className="card">
+            <div className="row" style={{ marginBottom: 12 }}>
+              <h2 className="section-title" style={{ margin: 0 }}>
+                AI summary
+              </h2>
+              <span className="spacer" />
+              {canEdit && !openAlex && (
+                <button
+                  type="button"
+                  className={`btn btn-sm ${hasText(paper.aiSummary) ? "" : "btn-primary"}`}
+                  onClick={() => generateSummary(hasText(paper.aiSummary))}
+                  disabled={summarizing}
+                >
+                  {summarizing ? (
+                    <>
+                      <Spinner /> Generating…
+                    </>
+                  ) : hasText(paper.aiSummary) ? (
+                    "Regenerate"
+                  ) : (
+                    "Generate"
+                  )}
+                </button>
+              )}
+            </div>
+            {summarizing && !hasText(paper.aiSummary) ? (
+              <div className="stack" style={{ gap: 8 }}>
+                {[90, 100, 75, 95, 60].map((w, i) => (
+                  <div key={i} className="skeleton" style={{ height: 12, width: `${w}%` }} />
+                ))}
+                <div className="meta" style={{ marginTop: 6 }}>
+                  Reading the PDF — this can take up to a minute.
+                </div>
+              </div>
+            ) : hasText(paper.aiSummary) ? (
+              <div className="prose" style={{ opacity: summarizing ? 0.5 : 1 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(String(paper.aiSummary)) }} />
+            ) : (
+              <div className="meta">
+                {openAlex
+                  ? "AI summaries need an arXiv PDF."
+                  : canEdit
+                    ? "No summary yet. Generate one from the paper's PDF with Gemini."
+                    : "No summary yet."}
+              </div>
+            )}
+          </section>
+        )}
+      </div>
+
+      {labelsOpen && (
+        <Modal
+          title="Edit labels"
+          onClose={() => setLabelsOpen(false)}
+          footer={
+            <>
+              <button type="button" className="btn" onClick={() => setLabelsOpen(false)}>
+                Cancel
+              </button>
               <button
                 type="button"
-                onClick={() => {
-                  setSearchText("");
-                  setSearchField("title");
-                  setActiveLabel("All");
+                className="btn btn-primary"
+                onClick={async () => {
+                  setLabelsOpen(false);
+                  await saveLabels(labelDraft);
                 }}
-                style={{
-                  padding: "8px 10px",
-                  borderRadius: 10,
-                  border: "1px solid #ddd",
-                  background: "transparent",
-                  cursor: "pointer",
-                  fontSize: 13,
-                }}
-                title="Clear filters"
               >
-                Clear
+                Save labels
               </button>
+            </>
+          }
+        >
+          <LabelPicker all={labels.map((l) => l.name)} selected={labelDraft} onChange={setLabelDraft} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Library list                                                        */
+/* ------------------------------------------------------------------ */
+
+function LibraryCard({
+  p,
+  activeLabel,
+  canEdit,
+  onOpen,
+  onFilterLabel,
+  onRemove,
+}: {
+  p: Paper;
+  activeLabel: string;
+  canEdit: boolean;
+  onOpen: () => void;
+  onFilterLabel: (name: string) => void;
+  onRemove: () => void;
+}) {
+  const toast = useToast();
+  const openAlex = isOpenAlex(p);
+
+  return (
+    <article className="card paper-card">
+      <div className="row" style={{ alignItems: "flex-start", flexWrap: "nowrap", gap: 12 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <button type="button" className="paper-title" onClick={onOpen}>
+            {p.title}
+          </button>
+          <div className="paper-authors" title={p.authors}>
+            {shortAuthors(p.authors)}
+          </div>
+          <div className="meta row" style={{ gap: 0, marginTop: 6 }}>
+            <span className={`badge ${openAlex ? "" : "badge-arxiv"}`}>{openAlex ? "OpenAlex" : "arXiv"}</span>
+            {p.published && <span className="dot-sep">{formatDate(p.published)}</span>}
+            {hasText(p.note) && (
+              <span className="dot-sep" title="Has notes">
+                📝 notes
+              </span>
+            )}
+            {hasText(p.aiSummary) && (
+              <span className="dot-sep" title="Has AI summary">
+                ✨ summary
+              </span>
             )}
           </div>
-        </>
-      )}
-
-      <p style={{ opacity: 0.75, marginTop: 10 }}>
-        {loading ? "Loading..." : `Showing ${filtered.length} / ${items.length}`}
-      </p>
-
-      {selectedId ? (
-        selectedPaper ? (
-          <div style={{ marginTop: 14 }}>
-            <button
-              onClick={closePaper}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 8,
-                border: "1px solid #ddd",
-                background: "transparent",
-                cursor: "pointer",
-                fontSize: 13,
-              }}
-            >
-              ← Back to Saved
-            </button>
-
-            <div style={{ border: "1px solid #eee", borderRadius: 12, padding: 16, marginTop: 12 }}>
-              <div style={{ fontWeight: 800, fontSize: 20, lineHeight: 1.2 }}>{selectedPaper.title}</div>
-              <div style={{ fontSize: 14, opacity: 0.85, marginTop: 6 }}>{selectedPaper.authors}</div>
-              <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>Published: {selectedPaper.published}</div>
-
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10, alignItems: "center" }}>
-                {(selectedPaper.labelNames ?? []).map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    onClick={() => {
-                      setActiveLabel(name);
-                      closePaper(); // pushes /saved
-                    }}
-                    style={{
-                      fontSize: 12,
-                      padding: "3px 8px",
-                      borderRadius: 999,
-                      border: `1px solid ${colorForLabel(name)}`,
-                      color: colorForLabel(name),
-                      background: `color-mix(in srgb, ${colorForLabel(name)} 12%, transparent)`,
-                      opacity: 0.95,
-                      cursor: "pointer",
-                    }}
-                    title={`Filter by ${name}`}
-                  >
-                    {name}
-                  </button>
-                ))}
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLabelPickerMode("add");
-                    setAddLabelOpen((v) => !v);
-
-                    const existing = new Set(selectedPaper.labelNames ?? []);
-                    const first = labels.map((l) => l.name).find((n) => !existing.has(n)) || "__new__";
-                    setAddLabelChoice(first);
-                    setAddLabelNewName("");
-                  }}
-                  title="Add label"
-                  style={{
-                    fontSize: 13,
-                    padding: "3px 10px",
-                    borderRadius: 999,
-                    border: "1px solid #ddd",
-                    cursor: "pointer",
-                    fontWeight: 800,
-                    background: "transparent",
-                  }}
-                >
-                  +
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLabelPickerMode("remove");
-                    setAddLabelOpen(true);
-
-                    const current = selectedPaper.labelNames ?? [];
-                    setAddLabelChoice(current[0] || "");
-                    setAddLabelNewName("");
-                  }}
-                  title="Remove label"
-                  style={{
-                    fontSize: 13,
-                    padding: "3px 10px",
-                    borderRadius: 999,
-                    border: "1px solid #ddd",
-                    cursor: "pointer",
-                    fontWeight: 800,
-                    background: "transparent",
-                  }}
-                  disabled={(selectedPaper.labelNames ?? []).length === 0}
-                >
-                  −
-                </button>
-
-                {addLabelOpen && (
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 8,
-                      alignItems: "center",
-                      flexWrap: "wrap",
-                      padding: "6px 10px",
-                      borderRadius: 999,
-                      border: "1px solid #eee",
-                      background: "color-mix(in srgb, CanvasText 3%, transparent)",
-                    }}
-                  >
-                    <select
-                      value={addLabelChoice}
-                      onChange={(e) => setAddLabelChoice(e.target.value)}
-                      style={{
-                        fontSize: 13,
-                        padding: "4px 8px",
-                        borderRadius: 999,
-                        border: "1px solid #ddd",
-                        background: "transparent",
-                      }}
-                      disabled={labelPickerMode === "remove" && (selectedPaper.labelNames ?? []).length === 0}
-                    >
-                      {labelPickerMode === "add" ? (
-                        (() => {
-                          const existing = new Set(selectedPaper.labelNames ?? []);
-                          const options = labels.map((l) => l.name).filter((n) => !existing.has(n));
-                          return options.map((n) => (
-                            <option key={n} value={n}>
-                              {n}
-                            </option>
-                          ));
-                        })()
-                      ) : (
-                        (selectedPaper.labelNames ?? []).map((n) => (
-                          <option key={n} value={n}>
-                            {n}
-                          </option>
-                        ))
-                      )}
-
-                      {labelPickerMode === "add" && <option value="__new__">+ New label…</option>}
-                    </select>
-
-                    {addLabelChoice === "__new__" && addLabelChoice === "__new__" && (
-                      <input
-                        value={addLabelNewName}
-                        onChange={(e) => setAddLabelNewName(e.target.value)}
-                        placeholder="Label name"
-                        style={{
-                          fontSize: 13,
-                          padding: "4px 10px",
-                          borderRadius: 999,
-                          border: "1px solid #ddd",
-                          minWidth: 140,
-                          background: "transparent",
-                        }}
-                      />
-                    )}
-
-                    {labelPickerMode === "add" && (
-                      <button
-                        type="button"
-                        onClick={addLabelToSelectedPaper}
-                        style={{
-                          fontSize: 13,
-                          padding: "4px 10px",
-                          borderRadius: 999,
-                          border: "1px solid #ddd",
-                          fontWeight: 800,
-                          cursor: "pointer",
-                          background: "transparent",
-                        }}
-                      >
-                        Add
-                      </button>
-                    )}
-
-                    {labelPickerMode === "remove" && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const name = (addLabelChoice || "").trim();
-                          if (!name) return;
-
-                          removeLabelFromSelectedPaper(name);
-
-                          setAddLabelOpen(false);
-                          setAddLabelChoice("");
-                          setAddLabelNewName("");
-                        }}
-                        style={{
-                          fontSize: 13,
-                          padding: "4px 10px",
-                          borderRadius: 999,
-                          border: "1px solid #ddd",
-                          fontWeight: 800,
-                          cursor: "pointer",
-                          background: "transparent",
-                        }}
-                        disabled={(selectedPaper.labelNames ?? []).length === 0}
-                      >
-                        Remove
-                      </button>
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAddLabelOpen(false);
-                        setAddLabelChoice("");
-                        setAddLabelNewName("");
-                      }}
-                      style={{
-                        fontSize: 13,
-                        padding: "4px 10px",
-                        borderRadius: 999,
-                        border: "1px solid #ddd",
-                        cursor: "pointer",
-                        background: "transparent",
-                        opacity: 0.85,
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              <div style={{ display: "flex", gap: 12, marginTop: 12, alignItems: "center" }}>
-                <a href={selectedPaper.absUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
-                  abs
+        </div>
+        <Menu>
+          {(close) => (
+            <>
+              <button type="button" className="menu-item" onClick={() => { close(); onOpen(); }}>
+                Open
+              </button>
+              <a className="menu-item" href={p.absUrl} target="_blank" rel="noreferrer" onClick={close}>
+                {openAlex ? "Source page ↗" : "arXiv page ↗"}
+              </a>
+              {!openAlex && (
+                <a className="menu-item" href={p.pdfUrl} target="_blank" rel="noreferrer" onClick={close}>
+                  PDF ↗
                 </a>
-                <a href={selectedPaper.pdfUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
-                  pdf
-                </a>
-
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  style={{ position: "relative", display: "inline-block" }}
-                >
-                  <button
-                    type="button"
-                    aria-label="More actions"
-                    title="More actions"
-                    onClick={() =>
-                      setOpenMenuFor((v) => (v === selectedPaper.arxivId ? null : selectedPaper.arxivId))
-                    }
-                    style={{
-                      padding: "6px 10px",
-                      borderRadius: 8,
-                      border: "1px solid #ddd",
-                      background: "transparent",
-                    }}
-                  >
-                    ⋯
-                  </button>
-
-                  {openMenuFor === selectedPaper.arxivId && (
-                    <div
-                      style={{
-                        position: "absolute",
-                        right: 0,
-                        top: "calc(100% + 8px)",
-                        minWidth: 140,
-                        border: "1px solid #eee",
-                        borderRadius: 10,
-                        background: "Canvas",
-                        color: "CanvasText",
-                        boxShadow: "0 8px 30px rgba(0,0,0,0.08)",
-                        overflow: "hidden",
-                        zIndex: 10,
-                      }}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setOpenMenuFor(null);
-                          removePaper(selectedPaper.arxivId);
-                        }}
-                        style={{
-                          width: "100%",
-                          textAlign: "left",
-                          padding: "10px 12px",
-                          border: "none",
-                          background: "transparent",
-                          cursor: "pointer",
-                          fontSize: 13,
-                          color: "CanvasText",
-                          fontWeight: 600,
-                        }}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-                  gap: 14,
-                  marginTop: 16,
-                  alignItems: "start",
+              )}
+              <button
+                type="button"
+                className="menu-item"
+                onClick={async () => {
+                  close();
+                  if (await copyText(toBibtex(p))) toast("BibTeX copied");
                 }}
               >
-                <div>
-                  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Abstract</h2>
-                  <div style={{ marginTop: 8, fontSize: 14, lineHeight: 1.5, opacity: 0.92 }}>
-                    {selectedPaper.summary}
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-                    <h2 style={{ margin: 0, fontSize: 16, fontWeight: 800 }}>Notes</h2>
-
-                    {!noteEditing ? (
-                      <button
-                        onClick={() => setNoteEditing(true)}
-                        style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd" }}
-                      >
-                        Edit note
-                      </button>
-                    ) : (
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button
-                          onClick={() => {
-                            setNoteDraft(String(selectedPaper.note ?? ""));
-                            setNoteEditing(false);
-                          }}
-                          style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd" }}
-                          disabled={noteSaving}
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          onClick={saveNote}
-                          style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", fontWeight: 700 }}
-                          disabled={noteSaving}
-                        >
-                          {noteSaving ? "Saving..." : "Save"}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-
-                  {!noteEditing ? (
-                    <div
-                      style={{ marginTop: 8, fontSize: 14, lineHeight: 1.5, opacity: 0.92 }}
-                      dangerouslySetInnerHTML={{ __html: renderMarkdown(String(selectedPaper.note ?? "")) }}
-                    />
-                  ) : (
-                    <textarea
-                      value={noteDraft}
-                      onChange={(e) => setNoteDraft(e.target.value)}
-                      placeholder="Write notes in Markdown..."
-                      style={{
-                        marginTop: 8,
-                        width: "100%",
-                        minHeight: 220,
-                        padding: 10,
-                        borderRadius: 10,
-                        border: "1px solid #ddd",
-                        fontFamily:
-                          "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
-                        fontSize: 13,
-                        lineHeight: 1.45,
-                      }}
-                    />
-                  )}
-                </div>
-
-
-              </div>
-
-              <h2 style={{ marginTop: 18, fontSize: 16, fontWeight: 800 }}>PDF</h2>
-              <div style={{ marginTop: 8, fontSize: 13, opacity: 0.75 }}>
-                Embedded via the browser PDF viewer (served through our /api/pdf proxy to avoid CORS).
-              </div>
-
-              <div style={{ marginTop: 10 }}>
-                <BrowserPdfViewer
-                  url={asEmbedPdfUrl(selectedPaper.pdfUrl) || asEmbedPdfUrl(selectedPaper.absUrl)}
-                  title={"Paper PDF"}
-                />
-              </div>
-              <h2 style={{ marginTop: 18, fontSize: 16, fontWeight: 800 }}>AI Summary</h2>
-
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 10,
-                  marginTop: 8,
-                }}
-              >
-                <div style={{ fontSize: 13, opacity: 0.75 }}>Generated summary (Markdown).</div>
-
-                <button
-                  onClick={generateSummary}
-                  style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ddd", fontWeight: 700 }}
-                  disabled={summaryGenerating}
-                  title={
-                    selectedPaper.aiSummary && String(selectedPaper.aiSummary).trim()
-                      ? "Regenerate summary"
-                      : "Generate summary"
-                  }
-                >
-                  {summaryGenerating
-                    ? "Generating..."
-                    : selectedPaper.aiSummary && String(selectedPaper.aiSummary).trim()
-                      ? "Regenerate"
-                      : "Generate"}
+                Copy BibTeX
+              </button>
+              {canEdit && (
+                <button type="button" className="menu-item danger" onClick={() => { close(); onRemove(); }}>
+                  Remove from library
                 </button>
-              </div>
+              )}
+            </>
+          )}
+        </Menu>
+      </div>
 
-              <div
-                style={{
-                  marginTop: 10,
-                  border: "1px solid #eee",
-                  borderRadius: 12,
-                  padding: 14,
-                }}
-              >
-                {selectedPaper.aiSummary && String(selectedPaper.aiSummary).trim() ? (
-                  <div
-                    style={{ fontSize: 14, lineHeight: 1.5, opacity: 0.92 }}
-                    dangerouslySetInnerHTML={{ __html: renderMarkdown(String(selectedPaper.aiSummary)) }}
-                  />
-                ) : (
-                  <div style={{ fontSize: 13, opacity: 0.75 }}>
-                    No AI summary yet. Click <b>Generate</b> to create one.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div style={{ marginTop: 14 }}>
-            <button
-              onClick={closePaper}
-              style={{
-                padding: "6px 10px",
-                borderRadius: 8,
-                border: "1px solid #ddd",
-                background: "transparent",
-                cursor: "pointer",
-                fontSize: 13,
-              }}
-            >
-              ← Back to Saved
-            </button>
-            <p style={{ opacity: 0.75, marginTop: 12 }}>Paper not found in your saved list.</p>
-          </div>
-        )
-      ) : filtered.length === 0 ? (
-        <p style={{ opacity: 0.7 }}>No saved papers for this filter.</p>
-      ) : (
-        <div style={{ display: "grid", gap: 12, marginTop: 12 }}>
-          {filtered.map((p) => (
-            <div key={p.arxivId} style={{ border: "1px solid #eee", borderRadius: 10, padding: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                <div>
-                  <button
-                    type="button"
-                    onClick={() => openPaper(p)}
-                    style={{
-                      fontWeight: 700,
-                      fontSize: 16,
-                      padding: 0,
-                      border: "none",
-                      background: "transparent",
-                      textAlign: "left",
-                      cursor: "pointer",
-                    }}
-                    title="Open paper"
-                  >
-                    {p.title}
-                  </button>
-                  <div style={{ fontSize: 13, opacity: 0.8 }}>{p.authors}</div>
-                  <div style={{ fontSize: 12, opacity: 0.7 }}>Published: {p.published}</div>
-
-                  {(p.labelNames ?? []).length > 0 && (
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                      {(p.labelNames ?? []).map((name) => (
-                        <button
-                          key={name}
-                          type="button"
-                          onClick={() => {
-                            setActiveLabel(name);
-                            window.scrollTo({ top: 0, behavior: "smooth" });
-                          }}
-                          style={{
-                            fontSize: 12,
-                            padding: "3px 8px",
-                            borderRadius: 999,
-                            border: `1px solid ${colorForLabel(name)}`,
-                            color: colorForLabel(name),
-                            background:
-                              activeLabel === name
-                                ? `color-mix(in srgb, ${colorForLabel(name)} 18%, transparent)`
-                                : `color-mix(in srgb, ${colorForLabel(name)} 12%, transparent)`,
-                            opacity: 0.95,
-                            cursor: "pointer",
-                          }}
-                          aria-pressed={activeLabel === name}
-                          title={`Filter by ${name}`}
-                        >
-                          {name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ display: "flex", gap: 10, alignItems: "start" }}>
-                  <a href={p.absUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
-                    abs
-                  </a>
-                  <a href={p.pdfUrl} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
-                    pdf
-                  </a>
-
-                  <div onClick={(e) => e.stopPropagation()} style={{ position: "relative", display: "inline-block" }}>
-                    <button
-                      type="button"
-                      aria-label="More actions"
-                      title="More actions"
-                      onClick={() =>
-                        setOpenMenuFor((v) => (v === p.arxivId ? null : p.arxivId))
-                      }
-                      style={{
-                        padding: "6px 10px",
-                        borderRadius: 8,
-                        border: "1px solid #ddd",
-                        background: "transparent",
-                      }}
-                    >
-                      ⋯
-                    </button>
-
-                    {openMenuFor === p.arxivId && (
-                      <div
-                        style={{
-                          position: "absolute",
-                          right: 0,
-                          top: "calc(100% + 8px)",
-                          minWidth: 140,
-                          border: "1px solid #eee",
-                          borderRadius: 10,
-                          background: "Canvas",
-                          color: "CanvasText",
-                          boxShadow: "0 8px 30px rgba(0,0,0,0.08)",
-                          overflow: "hidden",
-                          zIndex: 10,
-                        }}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setOpenMenuFor(null);
-                            removePaper(p.arxivId);
-                          }}
-                          style={{
-                            width: "100%",
-                            textAlign: "left",
-                            padding: "10px 12px",
-                            border: "none",
-                            background: "transparent",
-                            cursor: "pointer",
-                            fontSize: 13,
-                            color: "CanvasText",
-                            fontWeight: 600,
-                          }}
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Abstract hidden in list view by default */}
-            </div>
+      {(p.labelNames ?? []).length > 0 && (
+        <div className="row" style={{ marginTop: 10, gap: 6 }}>
+          {(p.labelNames ?? []).map((n) => (
+            <LabelChip key={n} name={n} pressed={activeLabel === n} onClick={() => onFilterLabel(n)} />
           ))}
         </div>
       )}
+
+      {p.summary && <div className="paper-abstract clamp-2">{p.summary}</div>}
+    </article>
+  );
+}
+
+function SavedPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const selectedId = (searchParams.get("paper") ?? "").trim();
+  const canEdit = useCanEdit();
+  const toast = useToast();
+
+  const [items, setItems] = useState<Paper[]>([]);
+  const [labels, setLabels] = useState<Label[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [activeLabel, setActiveLabel] = useState<string>(ALL);
+  const [searchText, setSearchText] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("saved-desc");
+
+  const reload = useCallback(async () => {
+    try {
+      const [s, l] = await Promise.all([
+        fetchJson<{ items: Paper[] }>("/api/saved"),
+        fetchJson<{ labels: Label[] }>("/api/saved?type=labels"),
+      ]);
+      setItems(s.items ?? []);
+      setLabels(l.labels ?? []);
+      setLoadError("");
+    } catch (e: any) {
+      setLoadError(String(e?.message ?? e));
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  const unlabeledCount = useMemo(() => items.filter((p) => (p.labelNames ?? []).length === 0).length, [items]);
+
+  const filtered = useMemo(() => {
+    let out = items;
+    if (activeLabel === UNLABELED) out = out.filter((p) => (p.labelNames ?? []).length === 0);
+    else if (activeLabel !== ALL) out = out.filter((p) => (p.labelNames ?? []).includes(activeLabel));
+
+    const terms = searchText.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length) {
+      out = out.filter((p) => {
+        const hay = [p.title, p.authors, p.summary, p.note ?? "", (p.labelNames ?? []).join(" ")].join(" \n ").toLowerCase();
+        return terms.every((t) => hay.includes(t));
+      });
+    }
+
+    const sorted = [...out];
+    const byTitle = (a: Paper, b: Paper) => a.title.localeCompare(b.title);
+    sorted.sort((a, b) => {
+      switch (sortKey) {
+        case "saved-asc":
+          return parseMs(a.createdAt) - parseMs(b.createdAt) || byTitle(a, b);
+        case "published-desc":
+          return parseMs(b.published) - parseMs(a.published) || byTitle(a, b);
+        case "published-asc":
+          return parseMs(a.published) - parseMs(b.published) || byTitle(a, b);
+        case "title":
+          return byTitle(a, b);
+        default:
+          return parseMs(b.createdAt) - parseMs(a.createdAt) || byTitle(a, b);
+      }
+    });
+    return sorted;
+  }, [items, activeLabel, searchText, sortKey]);
+
+  const selectedPaper = useMemo(() => items.find((p) => p.arxivId === selectedId) ?? null, [items, selectedId]);
+
+  // Prev/next follow the current filtered list; fall back to the full list if the paper isn't in it.
+  const nav = useMemo(() => {
+    const list = filtered.some((p) => p.arxivId === selectedId) ? filtered : items;
+    const i = list.findIndex((p) => p.arxivId === selectedId);
+    return {
+      prevId: i > 0 ? list[i - 1].arxivId : null,
+      nextId: i >= 0 && i < list.length - 1 ? list[i + 1].arxivId : null,
+    };
+  }, [filtered, items, selectedId]);
+
+  const openPaper = useCallback(
+    (id: string) => router.push(`/saved?paper=${encodeURIComponent(id)}`),
+    [router]
+  );
+
+  function closePaper() {
+    router.push("/saved");
+  }
+
+  function filterByLabel(name: string) {
+    setActiveLabel(name);
+    if (selectedId) closePaper();
+    else window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function removePaper(p: Paper) {
+    try {
+      await fetchJson(`/api/saved/${encodeURIComponent(p.arxivId)}`, { method: "DELETE" });
+      if (selectedId === p.arxivId) closePaper();
+      await reload();
+      toast("Removed from your library", {
+        action: {
+          label: "Undo",
+          run: async () => {
+            await sendJson("/api/saved", "POST", { ...p, labelNames: p.labelNames ?? [] });
+            await reload();
+          },
+        },
+      });
+    } catch (e: any) {
+      toast(`Remove failed: ${e?.message ?? e}`, { kind: "error" });
+    }
+  }
+
+  async function createLabel() {
+    const name = window.prompt("New label name:")?.trim();
+    if (!name) return;
+    try {
+      await sendJson("/api/saved", "POST", { kind: "label", name });
+      await reload();
+    } catch (e: any) {
+      toast(`Couldn't create label: ${e?.message ?? e}`, { kind: "error" });
+    }
+  }
+
+  async function renameLabel(from: string) {
+    const to = window.prompt(`Rename label "${from}" to:`, from)?.trim();
+    if (!to || to === from) return;
+    try {
+      await sendJson("/api/saved", "PATCH", { kind: "label", from, to });
+      if (activeLabel === from) setActiveLabel(to);
+      await reload();
+    } catch (e: any) {
+      toast(`Couldn't rename label: ${e?.message ?? e}`, { kind: "error" });
+    }
+  }
+
+  async function deleteLabel(name: string) {
+    const ok = window.confirm(`Delete label "${name}"?\n\nIt will be removed from all papers. The papers themselves stay in your library.`);
+    if (!ok) return;
+    try {
+      await fetchJson(`/api/saved?type=label&name=${encodeURIComponent(name)}`, { method: "DELETE" });
+      if (activeLabel === name) setActiveLabel(ALL);
+      await reload();
+    } catch (e: any) {
+      toast(`Couldn't delete label: ${e?.message ?? e}`, { kind: "error" });
+    }
+  }
+
+  function exportBibtex() {
+    if (filtered.length === 0) return;
+    const bib = filtered.map(toBibtex).join("\n\n") + "\n";
+    const suffix = activeLabel === ALL ? "library" : activeLabel === UNLABELED ? "unlabeled" : activeLabel;
+    downloadText(`paper-vault-${suffix.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.bib`, bib);
+    toast(`Exported ${filtered.length} entr${filtered.length === 1 ? "y" : "ies"}`);
+  }
+
+  if (selectedId) {
+    return (
+      <main className="container page">
+        {!loaded ? (
+          <div className="stack">
+            <div className="skeleton" style={{ height: 28, width: "60%" }} />
+            <div className="skeleton" style={{ height: 14, width: "40%" }} />
+          </div>
+        ) : selectedPaper ? (
+          <PaperDetail
+            paper={selectedPaper}
+            labels={labels}
+            canEdit={canEdit}
+            prevId={nav.prevId}
+            nextId={nav.nextId}
+            onBack={closePaper}
+            onOpen={openPaper}
+            onFilterLabel={filterByLabel}
+            onChanged={reload}
+            onRemove={removePaper}
+          />
+        ) : (
+          <div className="empty">
+            <div className="empty-title">Paper not found</div>
+            <div>It may have been removed from your library.</div>
+            <button type="button" className="btn" style={{ marginTop: 14 }} onClick={closePaper}>
+              ← Back to library
+            </button>
+          </div>
+        )}
+      </main>
+    );
+  }
+
+  const activeTitle = activeLabel === ALL ? "All papers" : activeLabel === UNLABELED ? "Unlabeled" : activeLabel;
+
+  return (
+    <main className="container page">
+      <div className="library">
+        <aside className="sidebar" aria-label="Filter by label">
+          <button type="button" className="side-item" aria-current={activeLabel === ALL} onClick={() => setActiveLabel(ALL)}>
+            All papers
+            <span className="count">{items.length}</span>
+          </button>
+          <button
+            type="button"
+            className="side-item"
+            aria-current={activeLabel === UNLABELED}
+            onClick={() => setActiveLabel(UNLABELED)}
+          >
+            Unlabeled
+            <span className="count">{unlabeledCount}</span>
+          </button>
+
+          <div className="section-title" style={{ margin: "18px 10px 6px" }}>
+            Labels
+          </div>
+          {labels.map((l) => (
+            <div
+              key={l.id}
+              role="button"
+              tabIndex={0}
+              className="side-item"
+              aria-current={activeLabel === l.name}
+              onClick={() => setActiveLabel(l.name)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  setActiveLabel(l.name);
+                }
+              }}
+            >
+              <span className="swatch" style={{ background: colorForLabel(l.name) }} />
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</span>
+              <span className="count">{l.count}</span>
+              {canEdit && (
+                <span className="actions">
+                  <button
+                    type="button"
+                    className="mini-btn"
+                    title="Rename label"
+                    aria-label={`Rename ${l.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      renameLabel(l.name);
+                    }}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    type="button"
+                    className="mini-btn"
+                    title="Delete label"
+                    aria-label={`Delete ${l.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      deleteLabel(l.name);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
+            </div>
+          ))}
+          {canEdit && (
+            <button type="button" className="side-item muted" onClick={createLabel}>
+              + New label
+            </button>
+          )}
+        </aside>
+
+        <section style={{ minWidth: 0 }}>
+          <div className="row" style={{ alignItems: "baseline" }}>
+            <h1 className="page-title">{activeTitle}</h1>
+            <span className="meta">
+              {loaded
+                ? filtered.length === items.length
+                  ? `${items.length} paper${items.length === 1 ? "" : "s"}`
+                  : `${filtered.length} of ${items.length}`
+                : ""}
+            </span>
+          </div>
+
+          <div className="row" style={{ marginTop: 14, gap: 10 }}>
+            <div className="searchbox" style={{ flex: "1 1 260px" }}>
+              <span className="searchbox-icon">
+                <SearchIcon />
+              </span>
+              <input
+                className="input"
+                style={{ height: 38, fontSize: 14 }}
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                placeholder="Filter by title, author, abstract, notes…"
+                aria-label="Filter library"
+              />
+            </div>
+            <select className="select" style={{ height: 38 }} value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)} aria-label="Sort">
+              <option value="saved-desc">Recently saved</option>
+              <option value="saved-asc">Oldest saved</option>
+              <option value="published-desc">Newest published</option>
+              <option value="published-asc">Oldest published</option>
+              <option value="title">Title A–Z</option>
+            </select>
+            <button type="button" className="btn" style={{ height: 38 }} onClick={exportBibtex} disabled={filtered.length === 0} title="Download the papers shown as a .bib file">
+              Export .bib
+            </button>
+          </div>
+
+          {(searchText.trim() || activeLabel !== ALL) && (
+            <div className="row" style={{ marginTop: 10 }}>
+              <span className="meta">Filters:</span>
+              {activeLabel !== ALL && (
+                <span className="chip chip-plain" style={{ cursor: "default" }}>
+                  {activeTitle}
+                  <button type="button" className="chip-x" aria-label="Clear label filter" onClick={() => setActiveLabel(ALL)}>
+                    ×
+                  </button>
+                </span>
+              )}
+              {searchText.trim() && (
+                <span className="chip chip-plain" style={{ cursor: "default" }}>
+                  “{searchText.trim()}”
+                  <button type="button" className="chip-x" aria-label="Clear text filter" onClick={() => setSearchText("")}>
+                    ×
+                  </button>
+                </span>
+              )}
+            </div>
+          )}
+
+          <div style={{ marginTop: 16 }}>
+            {loadError ? (
+              <div className="notice">Couldn&apos;t load your library: {loadError}</div>
+            ) : !loaded ? (
+              <div className="stack">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="card">
+                    <div className="skeleton" style={{ height: 18, width: "65%" }} />
+                    <div className="skeleton" style={{ height: 13, width: "40%", marginTop: 10 }} />
+                  </div>
+                ))}
+              </div>
+            ) : items.length === 0 ? (
+              <div className="empty">
+                <div className="empty-title">Your library is empty</div>
+                <div>Search for papers and press Save to collect them here.</div>
+                <Link href="/" className="btn btn-primary" style={{ marginTop: 16 }}>
+                  Find papers
+                </Link>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="empty">
+                <div className="empty-title">Nothing matches</div>
+                <div>Try another label or clear the filters.</div>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ marginTop: 14 }}
+                  onClick={() => {
+                    setSearchText("");
+                    setActiveLabel(ALL);
+                  }}
+                >
+                  Clear filters
+                </button>
+              </div>
+            ) : (
+              <div className="stack">
+                {filtered.map((p) => (
+                  <LibraryCard
+                    key={p.arxivId}
+                    p={p}
+                    activeLabel={activeLabel}
+                    canEdit={canEdit}
+                    onOpen={() => openPaper(p.arxivId)}
+                    onFilterLabel={filterByLabel}
+                    onRemove={() => removePaper(p)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
     </main>
   );
 }

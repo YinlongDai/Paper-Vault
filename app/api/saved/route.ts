@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { denyUnlessEditor, getViewer } from "@/lib/access";
 import { redactText } from "@/lib/redact";
+import { parseLinks } from "@/lib/links";
 
 const DEFAULT_LABELS = ["Feature Learning", "Robotic Foundation Model", "World Model"];
 
@@ -64,8 +65,9 @@ export async function GET(req: Request) {
     // Notes are private: only the owner gets the real text.
     const { canEdit } = await getViewer();
 
-    const itemsWithLabels = items.map(({ labels, _count, ...p }) => ({
+    const itemsWithLabels = items.map(({ labels, _count, links, linksCheckedAt: _checked, ...p }) => ({
       ...p,
+      links: parseLinks(links).items,
       ...(canEdit || !String(p.note ?? "").trim() ? {} : { note: redactText(p.note ?? ""), noteHidden: true }),
       annotationCount: _count.annotations,
       labelNames: labels.map((x) => x.label.name).sort((a, b) => a.localeCompare(b)),

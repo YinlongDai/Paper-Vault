@@ -1582,3 +1582,26 @@ button.paper-title:hover {
   background: rgba(79, 70, 229, 0.14);
   box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.45);
 }
+
+/* ---------- code / project links ---------- */
+
+.card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.card-link:hover {
+  color: var(--accent);
+}
+
+.link-btn-code {
+  border-color: color-mix(in srgb, var(--text) 30%, transparent);
+}
+
+.link-btn-project {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}

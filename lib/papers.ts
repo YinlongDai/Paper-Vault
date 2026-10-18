@@ -19,6 +19,7 @@ export type Paper = {
   annotationCount?: number;
   /** Set by the server when the note was replaced with filler for a visitor. */
   noteHidden?: boolean;
+  links?: { kind: "code" | "project"; url: string; source: string; stars?: number }[];
 };
 
 export type Label = { id: number; name: string; count: number };

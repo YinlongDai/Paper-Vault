@@ -18,6 +18,7 @@ import {
 import { bareArxivId, versionOf } from "@/lib/papers";
 import { useCanEdit, useToast } from "../components/providers";
 import { PdfReader } from "../components/pdf-reader";
+import { CodeIcon, GlobeIcon, PaperLinks } from "../components/paper-links";
 import { VersionsPanel, useVersions } from "../components/versions";
 import {
   ConfirmModal,
@@ -262,6 +263,7 @@ function PaperDetail({
               PDF ↗
             </a>
           )}
+          {!openAlex && <PaperLinks arxivId={paper.arxivId} canEdit={canEdit} />}
           <button
             type="button"
             className="btn btn-sm"
@@ -594,6 +596,20 @@ function LibraryCard({
                 🖍 {p.annotationCount}
               </span>
             )}
+            {(p.links ?? []).map((l) => (
+              <a
+                key={l.url}
+                className="dot-sep card-link"
+                href={l.url}
+                target="_blank"
+                rel="noreferrer"
+                title={l.url}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {l.kind === "code" ? <CodeIcon size={12} /> : <GlobeIcon size={12} />}
+                {l.kind === "code" ? "code" : "project"}
+              </a>
+            ))}
           </div>
         </div>
         <Menu>

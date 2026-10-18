@@ -1,0 +1,101 @@
+import { NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { denyUnlessEditor } from "@/lib/access";
+import { type LinkKind, type LinksState, classify, findLinks, normalizeUrl, parseLinks } from "@/lib/links";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 30;
+
+async function loadPaper(arxivId: string) {
+  return prisma.savedPaper.findUnique({
+    where: { arxivId },
+    select: { id: true, arxivId: true, pdfUrl: true, summary: true, links: true, linksCheckedAt: true },
+  });
+}
+
+async function save(id: number, state: LinksState, checked: boolean) {
+  await prisma.savedPaper.update({
+    where: { id },
+    data: { links: JSON.stringify(state), ...(checked ? { linksCheckedAt: new Date() } : {}) },
+  });
+}
+
+/** Re-scan, keeping manual links and anything the owner removed out of the result. */
+async function scan(paper: NonNullable<Awaited<ReturnType<typeof loadPaper>>>, prev: LinksState): Promise<LinksState> {
+  const found = await findLinks({ arxivId: paper.arxivId, pdfUrl: paper.pdfUrl, abstract: paper.summary });
+  const removed = new Set(prev.removed.map((u) => u.toLowerCase()));
+  const manual = prev.items.filter((l) => l.source === "manual");
+  const seen = new Set(manual.map((l) => l.url.toLowerCase()));
+  const auto = found.filter((l) => !removed.has(l.url.toLowerCase()) && !seen.has(l.url.toLowerCase()));
+  return { items: [...manual, ...auto], removed: prev.removed };
+}
+
+/**
+ * GET ?arxivId=… → { links, checkedAt }
+ * The first request for a paper scans its sources and stores the result; later requests read the cache.
+ */
+export async function GET(req: Request) {
+  const arxivId = (new URL(req.url).searchParams.get("arxivId") ?? "").trim();
+  if (!arxivId) return NextResponse.json({ error: "arxivId is required" }, { status: 400 });
+
+  const paper = await loadPaper(arxivId);
+  if (!paper) return NextResponse.json({ links: [], checkedAt: null });
+
+  let state = parseLinks(paper.links);
+  let checkedAt = paper.linksCheckedAt;
+  if (!checkedAt) {
+    state = await scan(paper, state);
+    await save(paper.id, state, true);
+    checkedAt = new Date();
+  }
+  return NextResponse.json({ links: state.items, checkedAt });
+}
+
+/**
+ * POST (owner only)
+ *  { arxivId, action: "rescan" }
+ *  { arxivId, action: "add", url, kind? }
+ *  { arxivId, action: "remove", url }
+ */
+export async function POST(req: Request) {
+  const denied = await denyUnlessEditor();
+  if (denied) return denied;
+
+  const body = await req.json().catch(() => ({}));
+  const arxivId = String(body?.arxivId ?? "").trim();
+  const paper = arxivId ? await loadPaper(arxivId) : null;
+  if (!paper) return NextResponse.json({ error: "Paper not found in library" }, { status: 404 });
+
+  let state = parseLinks(paper.links);
+  const action = String(body?.action ?? "");
+
+  if (action === "rescan") {
+    state = await scan(paper, state);
+    await save(paper.id, state, true);
+  } else if (action === "add") {
+    const url = normalizeUrl(String(body?.url ?? "")) ?? "";
+    if (!url) return NextResponse.json({ error: "Enter a full http(s) link" }, { status: 400 });
+    const kind: LinkKind = body?.kind === "code" || body?.kind === "project" ? body.kind : classify(url) ?? "project";
+    const key = url.toLowerCase();
+    state = {
+      items: [...state.items.filter((l) => l.url.toLowerCase() !== key), { kind, url, source: "manual" }],
+      removed: state.removed.filter((u) => u.toLowerCase() !== key),
+    };
+    await save(paper.id, state, false);
+  } else if (action === "remove") {
+    const key = String(body?.url ?? "").toLowerCase();
+    if (!key) return NextResponse.json({ error: "url is required" }, { status: 400 });
+    const target = state.items.find((l) => l.url.toLowerCase() === key);
+    state = {
+      items: state.items.filter((l) => l.url.toLowerCase() !== key),
+      // Remember removed auto-found links so a re-scan doesn't bring them back.
+      removed: target && target.source !== "manual" ? [...new Set([...state.removed, target.url])] : state.removed,
+    };
+    await save(paper.id, state, false);
+  } else {
+    return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+  }
+
+  return NextResponse.json({ links: state.items });
+}

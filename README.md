@@ -15,6 +15,7 @@ My Paper Vault allows you to search papers from **arXiv** and **OpenAlex**, save
 - 📄 **Integrated PDF Viewer**: View papers directly in your browser using a proxied viewer that bypasses CORS restrictions.
 - 🤖 **AI Summaries**: (Optional) Generate detailed paper summaries using the Gemini API, and regenerate them any time.
 - 🖍️ **Highlights & Margin Notes**: Select text in the built-in PDF reader to highlight it and attach a note that stays next to that line as you scroll.
+- 🔗 **Code & Project Links**: Automatically finds each paper's code repository and project page from the PDF's first page, Hugging Face and the arXiv listing — and lets you fix or add links.
 - 🔀 **Version Compare**: Switch between arXiv versions of a paper and compare them with a word-level diff and side-by-side PDFs.
 - ✨ **Home Dashboard**: A timeline of papers from a random label, library stats and recently saved papers.
 - 📚 **Library View**: Label sidebar with counts, full-text filter across titles, authors, abstracts and notes, and flexible sorting.

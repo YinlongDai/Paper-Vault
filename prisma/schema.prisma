@@ -20,6 +20,9 @@ model SavedPaper {
   note      String?
   aiSummary String?
   annotations Annotation[]
+  // Code / project-page links found for the paper: JSON { items: [{ kind, url, source, stars? }], removed: [url] }
+  links          String?
+  linksCheckedAt DateTime?
 }
 
 model Label {

@@ -121,7 +121,8 @@ async function arxivMeta(arxivBare: string): Promise<{ comment: string; summary:
 export async function findLinks(opts: { arxivId: string; pdfUrl: string; abstract: string }): Promise<{ links: PaperLink[]; failed: string[] }> {
   const bare = opts.arxivId.replace(/v\d+$/i, "");
   const isArxiv = /^(\d{4}\.\d{4,5}|[a-z-]+(\.[A-Z]{2})?\/\d{7})$/i.test(bare);
-  if (!isArxiv) return { links: [], failed: [] };
+  // Non-arXiv papers (e.g. OpenAlex with an open-access PDF) can still be scanned from their PDF.
+  if (!isArxiv && !opts.pdfUrl) return { links: [], failed: [] };
 
   const failed: string[] = [];
   const settle = <T,>(name: string, p: Promise<T>, fallback: T) =>
@@ -133,8 +134,8 @@ export async function findLinks(opts: { arxivId: string; pdfUrl: string; abstrac
     });
   const [pdfUrls, hf, meta] = await Promise.all([
     settle("pdf", firstPageUrls(opts.pdfUrl || `https://arxiv.org/pdf/${opts.arxivId}`), [] as string[]),
-    settle("huggingface", huggingFace(bare), null),
-    settle("arxiv", arxivMeta(bare), { comment: "", summary: "" }),
+    isArxiv ? settle("huggingface", huggingFace(bare), null) : Promise.resolve(null),
+    isArxiv ? settle("arxiv", arxivMeta(bare), { comment: "", summary: "" }) : Promise.resolve({ comment: "", summary: "" }),
   ]);
 
   const found = new Map<string, PaperLink>();

@@ -63,7 +63,16 @@ export function linkLabel(l: PaperLink, many: boolean, manyProjects = false) {
 }
 
 /** Code / project-page buttons for a saved paper, with an owner-only editor. */
-export function PaperLinks({ arxivId, canEdit }: { arxivId: string; canEdit: boolean }) {
+export function PaperLinks({
+  arxivId,
+  canEdit,
+  onLoaded,
+}: {
+  arxivId: string;
+  canEdit: boolean;
+  /** Called once after the first load (the scan may have found an open-access PDF for the paper). */
+  onLoaded?: () => void;
+}) {
   const toast = useToast();
   const [links, setLinks] = useState<PaperLink[] | null>(null);
   const [editing, setEditing] = useState(false);
@@ -75,11 +84,16 @@ export function PaperLinks({ arxivId, canEdit }: { arxivId: string; canEdit: boo
     let cancelled = false;
     setLinks(null);
     fetchJson<{ links: PaperLink[] }>(`/api/links?arxivId=${encodeURIComponent(arxivId)}`)
-      .then((j) => !cancelled && setLinks(j.links ?? []))
+      .then((j) => {
+        if (cancelled) return;
+        setLinks(j.links ?? []);
+        onLoaded?.();
+      })
       .catch(() => !cancelled && setLinks([]));
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arxivId]);
 
   async function act(body: Record<string, unknown>, ok?: string) {

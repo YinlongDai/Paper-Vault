@@ -1,3 +1,4 @@
+import { openalexUrl } from "@/lib/openalex";
 import { NextResponse } from "next/server";
 
 type MixedPaper = {
@@ -366,7 +367,7 @@ async function fetchOpenAlex(
 
   async function fetchAuthorIds(name: string): Promise<string[]> {
     const url = `https://api.openalex.org/authors?search=${encodeURIComponent(name)}&per-page=5`;
-    const r = await fetch(url, { cache: "no-store" as any });
+    const r = await fetch(openalexUrl(url), { cache: "no-store" as any });
     if (!r.ok) return [];
     const j: any = await r.json();
     const rows: any[] = Array.isArray(j?.results) ? j.results : [];
@@ -440,7 +441,7 @@ async function fetchOpenAlex(
     const results = await Promise.all(
       batch.map(async (pageNum) => {
         const pageUrl = worksUrl.replace("__PAGE__", encodeURIComponent(String(pageNum)));
-        const r = await fetch(pageUrl, { cache: "no-store" as any });
+        const r = await fetch(openalexUrl(pageUrl), { cache: "no-store" as any });
         if (!r.ok) return { ok: false, rows: [] as any[] };
 
         const j: any = await r.json();
@@ -494,7 +495,8 @@ async function fetchOpenAlex(
         published: published || "",
         doi: doi || "",
         absUrl: landing || "",
-        pdfUrl: landing || "",
+        // Prefer an open-access PDF so the reader works for OpenAlex results too.
+        pdfUrl: String(it?.best_oa_location?.pdf_url ?? "").trim() || landing || "",
         source: "openalex" as const,
       } as MixedPaper;
     })

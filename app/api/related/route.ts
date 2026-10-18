@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { openalexUrl } from "@/lib/openalex";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -19,11 +20,10 @@ type RelatedPaper = {
 };
 
 const OA = "https://api.openalex.org";
-const MAILTO = "mailto=paper-vault@users.noreply.github.com"; // polite pool
 const SELECT = "id,display_name,publication_year,publication_date,cited_by_count,authorships,locations,doi,abstract_inverted_index";
 
 async function oa(path: string) {
-  const res = await fetch(`${OA}${path}${path.includes("?") ? "&" : "?"}${MAILTO}`, { next: { revalidate: 86400 } });
+  const res = await fetch(openalexUrl(`${OA}${path}`), { next: { revalidate: 86400 } });
   if (!res.ok) throw new Error(`OpenAlex ${res.status}`);
   return res.json();
 }

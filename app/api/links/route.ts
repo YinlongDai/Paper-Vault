@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { denyUnlessEditor } from "@/lib/access";
 import { type LinkKind, type LinksState, classify, findLinks, normalizeUrl, parseLinks } from "@/lib/links";
+import { openAccessPdf, openalexUrl } from "@/lib/openalex";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,7 +27,31 @@ async function scan(
   paper: NonNullable<Awaited<ReturnType<typeof loadPaper>>>,
   prev: LinksState
 ): Promise<LinksState & { failed: string[] }> {
-  const { links: found, failed } = await findLinks({ arxivId: paper.arxivId, pdfUrl: paper.pdfUrl, abstract: paper.summary });
+  let arxivId = paper.arxivId;
+  let pdfUrl = paper.pdfUrl;
+  const oaFailed: string[] = [];
+
+  // OpenAlex papers: look up an open-access PDF (often an arXiv copy) and remember it as the paper's PDF.
+  if (paper.arxivId.startsWith("openalex:")) {
+    arxivId = "";
+    pdfUrl = "";
+    try {
+      const workId = paper.arxivId.slice("openalex:".length).split("/").pop();
+      const res = await fetch(openalexUrl(`https://api.openalex.org/works/${workId}?select=id,best_oa_location,locations`), { cache: "no-store" });
+      if (!res.ok) throw new Error(`OpenAlex ${res.status}`);
+      const oa = openAccessPdf(await res.json());
+      arxivId = oa.arxivId;
+      pdfUrl = oa.pdfUrl;
+      if (oa.pdfUrl && oa.pdfUrl !== paper.pdfUrl) {
+        await prisma.savedPaper.update({ where: { id: paper.id }, data: { pdfUrl: oa.pdfUrl } });
+      }
+    } catch (e: any) {
+      oaFailed.push(`openalex: ${String(e?.message ?? e).slice(0, 200)}`);
+    }
+  }
+
+  const { links: found, failed: scanFailed } = await findLinks({ arxivId, pdfUrl, abstract: paper.summary });
+  const failed = [...oaFailed, ...scanFailed];
   const removed = new Set(prev.removed.map((u) => u.toLowerCase()));
   const manual = prev.items.filter((l) => l.source === "manual");
   const seen = new Set(manual.map((l) => l.url.toLowerCase()));

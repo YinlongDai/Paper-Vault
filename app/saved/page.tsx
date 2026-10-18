@@ -137,7 +137,9 @@ function PaperDetail({
   const openAlex = isOpenAlex(paper);
   const { versions, error: versionsError } = useVersions(paper.arxivId, !openAlex && versionsWanted);
   const readingPdfUrl = readingVersion ? `https://arxiv.org/pdf/${bareArxivId(paper.arxivId)}${readingVersion}` : "";
-  const pdfUrl = openAlex ? "" : asEmbedPdfUrl(paper.pdfUrl) || asEmbedPdfUrl(paper.absUrl);
+  // OpenAlex papers get a PDF once an open-access copy has been found (stored as pdfUrl).
+  const hasPdf = !openAlex || (!!paper.pdfUrl && paper.pdfUrl !== paper.absUrl);
+  const pdfUrl = !hasPdf ? "" : asEmbedPdfUrl(paper.pdfUrl) || asEmbedPdfUrl(paper.absUrl);
   const proxiedPdf = pdfUrl ? `/api/pdf?url=${encodeURIComponent(pdfUrl)}` : "";
   const paperLabels = paper.labelNames ?? [];
 
@@ -332,12 +334,12 @@ function PaperDetail({
           <a className="btn btn-sm" href={paper.absUrl} target="_blank" rel="noreferrer">
             {openAlex ? "Open source page ↗" : "arXiv page ↗"}
           </a>
-          {!openAlex && (
+          {hasPdf && (
             <a className="btn btn-sm" href={pdfUrl || paper.pdfUrl} target="_blank" rel="noreferrer">
               PDF ↗
             </a>
           )}
-          {!openAlex && <PaperLinks arxivId={paper.arxivId} canEdit={canEdit} />}
+          <PaperLinks arxivId={paper.arxivId} canEdit={canEdit} onLoaded={openAlex && !hasPdf ? onChanged : undefined} />
           <button
             type="button"
             className="btn btn-sm"
@@ -561,7 +563,7 @@ function PaperDetail({
                 AI summary
               </h2>
               <span className="spacer" />
-              {canEdit && !openAlex && (
+              {canEdit && hasPdf && (
                 <button
                   type="button"
                   className={`btn btn-sm ${hasText(paper.aiSummary) ? "" : "btn-primary"}`}
@@ -593,8 +595,8 @@ function PaperDetail({
               <div className="prose" style={{ opacity: summarizing ? 0.5 : 1 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(String(paper.aiSummary)) }} />
             ) : (
               <div className="meta">
-                {openAlex
-                  ? "AI summaries need an arXiv PDF."
+                {!hasPdf
+                  ? "AI summaries need the paper's PDF (none found yet)."
                   : canEdit
                     ? "No summary yet. Generate one from the paper's PDF with Gemini."
                     : "No summary yet."}
@@ -722,7 +724,7 @@ function LibraryCard({
               <a className="menu-item" href={p.absUrl} target="_blank" rel="noreferrer" onClick={close}>
                 {openAlex ? "Source page ↗" : "arXiv page ↗"}
               </a>
-              {!openAlex && (
+              {(!openAlex || (p.pdfUrl && p.pdfUrl !== p.absUrl)) && (
                 <a className="menu-item" href={p.pdfUrl} target="_blank" rel="noreferrer" onClick={close}>
                   PDF ↗
                 </a>

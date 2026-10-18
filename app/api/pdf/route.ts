@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { prisma } from "@/lib/prisma";
 
 const ALLOW_HOSTS = new Set([
   "arxiv.org",
@@ -22,7 +23,12 @@ export async function GET(req: NextRequest) {
   }
 
   if (target.protocol !== "https:") return bad(400, "Only https is allowed");
-  if (!ALLOW_HOSTS.has(target.hostname)) return bad(403, "Host not allowed");
+  // arXiv is always allowed; any other host only for the exact PDF URL of a paper in the library
+  // (e.g. an open-access copy found via OpenAlex), so this can't be used as an open proxy.
+  if (!ALLOW_HOSTS.has(target.hostname)) {
+    const known = await prisma.savedPaper.findFirst({ where: { pdfUrl: u }, select: { id: true } });
+    if (!known) return bad(403, "Host not allowed");
+  }
 
   // Pass Range header through for PDF.js partial loading (important for speed).
   const range = req.headers.get("range") ?? undefined;

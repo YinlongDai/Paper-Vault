@@ -90,6 +90,27 @@ export function ReadOnlyNotice({ what }: { what: string }) {
   );
 }
 
+/** A note the viewer may not read: the server sent filler text, shown blurred under a lock. */
+export function PrivateNote({ text, compact }: { text: string; compact?: boolean }) {
+  return (
+    <div className={`private-note ${compact ? "compact" : ""}`}>
+      <div className="private-note-text" aria-hidden="true">
+        {text}
+      </div>
+      <div className="private-note-lock">
+        <span aria-hidden="true">🔒</span>
+        <span>
+          Private note ·{" "}
+          <a href="/api/auth/signin" style={{ textDecoration: "underline" }}>
+            sign in
+          </a>{" "}
+          to read
+        </span>
+      </div>
+    </div>
+  );
+}
+
 /** Single-line text prompt in a modal (replaces window.prompt, which some browsers block). */
 export function PromptModal({
   title,

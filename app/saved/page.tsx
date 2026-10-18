@@ -25,6 +25,7 @@ import {
   LabelPicker,
   Menu,
   Modal,
+  PrivateNote,
   PromptModal,
   ReadOnlyNotice,
   SearchIcon,
@@ -392,6 +393,8 @@ function PaperDetail({
                     <span className="kbd">Esc</span> to cancel
                   </div>
                 </>
+              ) : paper.noteHidden ? (
+                <PrivateNote text={String(paper.note ?? "")} />
               ) : hasText(paper.note) ? (
                 <div className="prose" dangerouslySetInnerHTML={{ __html: renderMarkdown(String(paper.note)) }} />
               ) : (
@@ -688,7 +691,7 @@ function SavedPageInner() {
     const terms = searchText.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (terms.length) {
       out = out.filter((p) => {
-        const hay = [p.title, p.authors, p.summary, p.note ?? "", (p.labelNames ?? []).join(" ")].join(" \n ").toLowerCase();
+        const hay = [p.title, p.authors, p.summary, p.noteHidden ? "" : p.note ?? "", (p.labelNames ?? []).join(" ")].join(" \n ").toLowerCase();
         return terms.every((t) => hay.includes(t));
       });
     }
@@ -882,7 +885,8 @@ function SavedPageInner() {
               }}
             >
               <span className="swatch" style={{ background: colorForLabel(l.name) }} />
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.name}</span>
+              <span className="side-name">{l.name}</span>
+              <span className="side-trail">
               <span className="count">{l.count}</span>
               {canEdit && (
                 <span className="actions">
@@ -912,6 +916,7 @@ function SavedPageInner() {
                   </button>
                 </span>
               )}
+              </span>
             </div>
           ))}
           {canEdit && (

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { denyUnlessEditor } from "@/lib/access";
+import { denyUnlessEditor, getViewer } from "@/lib/access";
+import { redactText } from "@/lib/redact";
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +46,12 @@ export async function GET(req: Request) {
     where: { paperId },
     orderBy: [{ page: "asc" }, { createdAt: "asc" }],
   });
-  return NextResponse.json({ annotations: rows.map(toClient) });
+  // Notes are private: visitors see that a note exists, not what it says.
+  const { canEdit } = await getViewer();
+  const annotations = rows.map(toClient).map((a) =>
+    canEdit || !a.note.trim() ? a : { ...a, note: redactText(a.note), noteHidden: true }
+  );
+  return NextResponse.json({ annotations });
 }
 
 /** POST { arxivId, version, page, rects, quote, note?, color? } → { annotation } */

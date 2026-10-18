@@ -17,6 +17,8 @@ export type Paper = {
   aiSummary?: string | null;
   createdAt?: string;
   annotationCount?: number;
+  /** Set by the server when the note was replaced with filler for a visitor. */
+  noteHidden?: boolean;
 };
 
 export type Label = { id: number; name: string; count: number };

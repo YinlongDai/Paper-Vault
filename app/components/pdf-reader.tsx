@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { fetchJson, renderMarkdown, sendJson } from "@/lib/papers";
 import { useToast } from "./providers";
-import { Spinner } from "./ui";
+import { PrivateNote, Spinner } from "./ui";
 
 type Rect = [number, number, number, number]; // x, y, w, h as fractions of the page
 
@@ -20,6 +20,7 @@ export type Annotation = {
   note: string;
   color: string;
   createdAt: string;
+  noteHidden?: boolean;
 };
 
 export const HIGHLIGHT_COLORS: Record<string, string> = {
@@ -31,6 +32,8 @@ export const HIGHLIGHT_COLORS: Record<string, string> = {
 };
 
 type PageSize = { w: number; h: number };
+/** A clickable area from the PDF's link annotations, in fractions of the page. */
+type PageLink = { x: number; y: number; w: number; h: number; url?: string; dest?: unknown };
 type PendingSelection = { page: number; rects: Rect[]; quote: string; x: number; y: number };
 
 const MIN_ZOOM = 0.5;
@@ -83,6 +86,7 @@ function PdfPage({
   annotations,
   activeId,
   onMarkerClick,
+  onInternalLink,
   registerRef,
 }: {
   pdf: any;
@@ -92,6 +96,7 @@ function PdfPage({
   annotations: Annotation[];
   activeId: number | null;
   onMarkerClick: (id: number) => void;
+  onInternalLink: (dest: unknown) => void;
   registerRef: (page: number, el: HTMLDivElement | null) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -99,6 +104,7 @@ function PdfPage({
   const textRef = useRef<HTMLDivElement | null>(null);
   const [visible, setVisible] = useState(false);
   const [rendered, setRendered] = useState(false);
+  const [links, setLinks] = useState<PageLink[]>([]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -145,7 +151,30 @@ function PdfPage({
       textDiv.replaceChildren();
       textLayer = new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container: textDiv, viewport });
       await textLayer.render();
-      if (!cancelled) setRendered(true);
+      if (cancelled) return;
+      setRendered(true);
+
+      // Link annotations → clickable areas (stored as fractions so they follow zoom without re-reading).
+      const annots: any[] = await page.getAnnotations({ intent: "display" });
+      if (cancelled) return;
+      const found: PageLink[] = [];
+      for (const an of annots) {
+        if (an?.subtype !== "Link" || !Array.isArray(an.rect)) continue;
+        const url = an.url || an.unsafeUrl;
+        if (!url && !an.dest) continue;
+        const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(an.rect);
+        const left = Math.min(x1, x2);
+        const top = Math.min(y1, y2);
+        found.push({
+          x: left / viewport.width,
+          y: top / viewport.height,
+          w: Math.abs(x2 - x1) / viewport.width,
+          h: Math.abs(y2 - y1) / viewport.height,
+          url: url && /^(https?:|mailto:)/i.test(url) ? url : undefined,
+          dest: url ? undefined : an.dest,
+        });
+      }
+      setLinks(found.filter((l) => l.url || l.dest));
     })().catch((e) => {
       if (!cancelled && e?.name !== "RenderingCancelledException") console.error("Page render failed", e);
     });
@@ -202,6 +231,16 @@ function PdfPage({
         )}
       </div>
       <div ref={textRef} className="textLayer" />
+      <div className="link-layer">
+        {links.map((l, i) => {
+          const style = { left: `${l.x * 100}%`, top: `${l.y * 100}%`, width: `${l.w * 100}%`, height: `${l.h * 100}%` };
+          return l.url ? (
+            <a key={i} className="pdf-link" style={style} href={l.url} target="_blank" rel="noreferrer noopener" title={l.url} />
+          ) : (
+            <button key={i} type="button" className="pdf-link" style={style} title="Go to reference" onClick={() => onInternalLink(l.dest)} />
+          );
+        })}
+      </div>
       {annotations.map((a) => (
         <button
           key={`m-${a.id}`}
@@ -307,7 +346,9 @@ function NoteCard({
         </>
       ) : (
         <>
-          {a.note.trim() ? (
+          {a.noteHidden ? (
+            <PrivateNote text={a.note} compact />
+          ) : a.note.trim() ? (
             <div className="prose note-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(a.note) }} />
           ) : (
             canEdit && <div className="meta" style={{ fontSize: 12, marginTop: 6 }}>No note yet.</div>
@@ -369,6 +410,7 @@ export function PdfReader({
   const [newColor, setNewColor] = useState("yellow");
   const [tops, setTops] = useState<Record<number, number>>({});
   const [wide, setWide] = useState(true);
+  const [backTop, setBackTop] = useState<number | null>(null);
 
   const proxied = `/api/pdf?url=${encodeURIComponent(pdfUrl)}`;
   const annotations = useMemo(() => all.filter((a) => (a.version || "") === version), [all, version]);
@@ -717,6 +759,32 @@ export function PdfReader({
     scrollToAnnotation(next.id);
   }
 
+  /** Follow an in-document link (named or explicit destination) and remember where we came from. */
+  const goToDest = useCallback(
+    async (dest: unknown) => {
+      const root = scrollRef.current;
+      if (!pdf || !root) return;
+      try {
+        const explicit: any[] | null = typeof dest === "string" ? await pdf.getDestination(dest) : (dest as any[]);
+        if (!Array.isArray(explicit) || !explicit.length) return;
+        const ref = explicit[0];
+        const pageIndex: number = typeof ref === "object" && ref !== null ? await pdf.getPageIndex(ref) : Number(ref);
+        const pageEl = pageEls.current.get(pageIndex + 1);
+        if (!pageEl) return;
+        const h = sizes[pageIndex]?.h ?? 0;
+        const kind = explicit[1]?.name;
+        const y = kind === "XYZ" ? explicit[3] : kind === "FitH" || kind === "FitBH" ? explicit[2] : null;
+        const frac = typeof y === "number" && h ? Math.min(1, Math.max(0, 1 - y / h)) : 0;
+        setBackTop(root.scrollTop);
+        // Jump instantly, like a desktop PDF viewer (a smooth scroll gets cut short by the re-render).
+        root.scrollTop = pageEl.offsetTop + frac * pageEl.offsetHeight - 40;
+      } catch (e) {
+        console.error("Couldn't follow link", e);
+      }
+    },
+    [pdf, sizes]
+  );
+
   function goToPage(n: number) {
     const el = pageEls.current.get(n);
     if (el && scrollRef.current) scrollRef.current.scrollTo({ top: el.offsetTop - 12, behavior: "smooth" });
@@ -749,6 +817,19 @@ export function PdfReader({
             </select>
             <span className="hide-sm">of {sizes.length}</span>
           </label>
+        )}
+        {backTop !== null && (
+          <button
+            type="button"
+            className="btn btn-sm"
+            title="Back to where you were before following a link"
+            onClick={() => {
+              if (scrollRef.current) scrollRef.current.scrollTop = backTop;
+              setBackTop(null);
+            }}
+          >
+            ↩ Back
+          </button>
         )}
         <span className="spacer" />
         {annotations.length > 0 && (
@@ -817,6 +898,7 @@ export function PdfReader({
                   scale={scale}
                   annotations={annotations.filter((a) => a.page === i + 1)}
                   activeId={activeId}
+                  onInternalLink={goToDest}
                   onMarkerClick={(id) => {
                     setActiveId(id);
                     if (!wide) document.getElementById(`note-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });

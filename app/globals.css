@@ -600,6 +600,36 @@ button.paper-title:hover {
   background: var(--border);
 }
 
+.side-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+
+/* Count and hover actions share one fixed slot, so hovering never shifts or rewraps the label. */
+.side-trail {
+  flex: none;
+  width: 46px;
+  display: flex;
+  justify-content: flex-end;
+  align-self: flex-start;
+  margin-top: 1px;
+}
+
+.side-item:has(.side-name) {
+  align-items: flex-start;
+}
+
+.side-item:has(.side-name) .swatch {
+  margin-top: 5px;
+}
+
+.side-trail .count,
+.side-trail .actions {
+  margin-left: 0;
+}
+
 .swatch {
   width: 9px;
   height: 9px;
@@ -633,6 +663,11 @@ button.paper-title:hover {
     border: 1px solid var(--border);
   }
 
+  .side-trail {
+    width: auto;
+    margin-left: 4px;
+  }
+
   .side-item .count {
     margin-left: 4px;
   }
@@ -643,9 +678,16 @@ button.paper-title:hover {
 .tabs {
   display: flex;
   gap: 2px;
-  border-bottom: 1px solid var(--border);
+  /* Baseline drawn as an inset shadow so the active underline doesn't overflow the row (no vertical scroll). */
+  box-shadow: inset 0 -1px 0 var(--border);
   margin-top: 22px;
   overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .tab {
@@ -657,7 +699,6 @@ button.paper-title:hover {
   font-weight: 550;
   cursor: pointer;
   border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
   white-space: nowrap;
 }
 
@@ -1463,4 +1504,71 @@ button.paper-title:hover {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* ---------- private notes (visitors) ---------- */
+
+.private-note {
+  position: relative;
+  border-radius: 10px;
+  overflow: hidden;
+  min-height: 64px;
+}
+
+.private-note.compact {
+  min-height: 46px;
+  margin-top: 6px;
+}
+
+.private-note-text {
+  filter: blur(5px);
+  opacity: 0.7;
+  user-select: none;
+  pointer-events: none;
+  white-space: pre-wrap;
+  font-size: 14px;
+  line-height: 1.6;
+  max-height: 160px;
+  overflow: hidden;
+}
+
+.private-note.compact .private-note-text {
+  font-size: 12.5px;
+  max-height: 70px;
+}
+
+.private-note-lock {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 35%, transparent);
+}
+
+.link-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.pdf-link {
+  position: absolute;
+  display: block;
+  pointer-events: auto;
+  border: none;
+  padding: 0;
+  background: transparent;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.pdf-link:hover {
+  background: rgba(79, 70, 229, 0.14);
+  box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.45);
 }

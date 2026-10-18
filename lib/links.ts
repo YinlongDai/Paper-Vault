@@ -11,7 +11,7 @@ const UA = { "User-Agent": "paper-vault/0.1 (self-hosted)" };
 const CODE_HOSTS = /^(github\.com|gitlab\.com|bitbucket\.org|codeberg\.org|huggingface\.co)$/i;
 // Hosts that are never a paper's own code/project page.
 const NOISE_HOSTS =
-  /(^|\.)(arxiv\.org|doi\.org|creativecommons\.org|orcid\.org|acm\.org|ieee\.org|springer\.com|neurips\.cc|openreview\.net|aclanthology\.org|cvf\.com|thecvf\.com|twitter\.com|x\.com|linkedin\.com|facebook\.com|wikipedia\.org|google\.com|youtube\.com|youtu\.be|semanticscholar\.org|paperswithcode\.com|w3\.org|ietf\.org|example\.com)$/i;
+  /(^|\.)(arxiv\.org|doi\.org|creativecommons\.org|orcid\.org|acm\.org|ieee\.org|springer\.com|neurips\.cc|openreview\.net|aclanthology\.org|cvf\.com|thecvf\.com|twitter\.com|x\.com|linkedin\.com|facebook\.com|wikipedia\.org|google\.com|youtube\.com|youtu\.be|semanticscholar\.org|paperswithcode\.com|w3\.org|ietf\.org|example\.com|medium\.com|substack\.com|reddit\.com|businessinsider\.com|nytimes\.com|theverge\.com|wired\.com|techcrunch\.com|forbes\.com|bloomberg\.com|reuters\.com|cnbc\.com|theguardian\.com|bbc\.co\.uk|wsj\.com|ft\.com|economist\.com|technologyreview\.com|venturebeat\.com|zdnet\.com|cnn\.com)$/i;
 
 export function parseLinks(raw: string | null | undefined): LinksState {
   try {
@@ -36,6 +36,8 @@ export function normalizeUrl(input: string): string | null {
     return null;
   }
   u.hash = "";
+  // Drop tracking parameters (utm_*, ref, …).
+  for (const k of [...u.searchParams.keys()]) if (/^(utm_|ref$|ref_src$|fbclid$|gclid$)/i.test(k)) u.searchParams.delete(k);
   const host = u.hostname.replace(/^www\./i, "").toLowerCase();
   if (host === "github.com" || host === "gitlab.com") {
     const parts = u.pathname.split("/").filter(Boolean);

@@ -1788,3 +1788,8 @@ span.priority-flag {
 .related-row:first-child {
   border-top: none;
 }
+
+.menu-item:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

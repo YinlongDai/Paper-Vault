@@ -279,7 +279,16 @@ export function Modal({
 }
 
 /** A "⋯" button with a dropdown that closes on outside click / Escape. */
-export function Menu({ children, label = "More actions" }: { children: (close: () => void) => React.ReactNode; label?: string }) {
+export function Menu({
+  children,
+  label = "More actions",
+  trigger,
+}: {
+  children: (close: () => void) => React.ReactNode;
+  label?: string;
+  /** Custom button content (defaults to "⋯"). */
+  trigger?: React.ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
@@ -303,13 +312,14 @@ export function Menu({ children, label = "More actions" }: { children: (close: (
     <div className="menu-wrap" ref={ref}>
       <button
         type="button"
-        className="btn btn-sm btn-ghost btn-icon"
+        className={trigger ? "btn" : "btn btn-sm btn-ghost btn-icon"}
+        style={trigger ? { height: 38 } : undefined}
         aria-label={label}
         title={label}
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        ⋯
+        {trigger ?? "⋯"}
       </button>
       {open && (
         <div className="menu" role="menu">

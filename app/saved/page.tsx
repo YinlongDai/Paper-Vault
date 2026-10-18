@@ -348,6 +348,11 @@ function PaperDetail({
             Copy BibTeX
           </button>
           {canEdit && (
+            <a className="btn btn-sm" href={`/api/export?format=md&arxivId=${encodeURIComponent(paper.arxivId)}`} title="Notes, highlights and summary as a Markdown file">
+              Export notes (.md)
+            </a>
+          )}
+          {canEdit && (
             <button type="button" className="btn btn-sm btn-danger" onClick={() => onRemove(paper)}>
               Remove
             </button>
@@ -1001,6 +1006,14 @@ function SavedPageInner() {
     );
   }
 
+  const markdownExportUrl =
+    "/api/export?format=md" +
+    (activeLabel.startsWith(STATUS_FILTER)
+      ? `&status=${encodeURIComponent(activeLabel.slice(STATUS_FILTER.length))}`
+      : activeLabel !== ALL && activeLabel !== UNLABELED
+        ? `&label=${encodeURIComponent(activeLabel)}`
+        : "");
+
   const activeTitle =
     activeLabel === ALL
       ? "All papers"
@@ -1141,9 +1154,33 @@ function SavedPageInner() {
               <option value="title">Title A–Z</option>
               <option value="priority">Priority / reading</option>
             </select>
-            <button type="button" className="btn" style={{ height: 38 }} onClick={exportBibtex} disabled={filtered.length === 0} title="Download the papers shown as a .bib file">
-              Export .bib
-            </button>
+            <Menu label="Export" trigger={<>Export ▾</>}>
+              {(close) => (
+                <>
+                  <button
+                    type="button"
+                    className="menu-item"
+                    disabled={filtered.length === 0}
+                    onClick={() => {
+                      close();
+                      exportBibtex();
+                    }}
+                  >
+                    BibTeX (.bib) · papers shown
+                  </button>
+                  {canEdit && (
+                    <a className="menu-item" href={markdownExportUrl} onClick={close}>
+                      Notes &amp; highlights (.md) · {activeTitle}
+                    </a>
+                  )}
+                  {canEdit && (
+                    <a className="menu-item" href="/api/export?format=json" onClick={close}>
+                      Full backup (.json)
+                    </a>
+                  )}
+                </>
+              )}
+            </Menu>
           </div>
 
           {(searchText.trim() || activeLabel !== ALL) && (
